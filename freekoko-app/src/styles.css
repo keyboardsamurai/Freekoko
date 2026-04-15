@@ -1591,3 +1591,41 @@ input:disabled {
 .about-sep {
   color: var(--fg-faint);
 }
+
+/* ============================================================================
+ * Streaming TTS additions (wave 2)
+ * ============================================================================ */
+
+:root {
+  /* Brightened accent for the reduced-motion fallback of the streaming pulse. */
+  --accent-pulse: color-mix(in oklab, var(--accent) 78%, white);
+  /* Foreground color used for muted streaming-related metadata (duration estimate, chunk counter). */
+  --stream-indicator-fg: var(--fg-muted);
+}
+
+/* Generic muted metadata line — used below the textarea for the duration estimate. */
+.text-meta {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.text-meta-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Partial-generation badge in HistoryItem header. */
+.history-item-partial-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  background: transparent;
+  border: 1px solid var(--warning-border);
+  color: var(--warning);
+  line-height: 1.5;
+}

@@ -23,9 +23,33 @@ help:
 all: check-deps sidecar app
 
 sidecar:
-	@echo "Building Swift sidecar (release arm64)..."
-	cd $(SIDECAR_DIR) && swift build -c release --arch arm64
+	@echo "Building Swift sidecar (Release arm64 via xcodebuild)..."
+	# We use xcodebuild rather than `swift build -c release` because xcodebuild
+	# automatically compiles MLX's .metal shaders into default.metallib (the
+	# runtime Metal shader library). SPM's Cmlx target explicitly excludes
+	# those sources (see mlx-swift/Package.swift: "see PrepareMetalShaders --
+	# don't build the kernels in place"), so `swift build` alone would produce
+	# a binary that can't load its GPU kernels and logs "MLX error: Failed to
+	# load the default metallib" on launch. xcodebuild is slower but correct.
+	cd $(SIDECAR_DIR) && xcodebuild \
+	  -scheme freekoko-sidecar \
+	  -configuration Release \
+	  -derivedDataPath .build/xcode-release \
+	  -destination 'platform=macOS,arch=arm64' \
+	  -quiet \
+	  build
+	# Stage the binary and renamed metallib at the SPM-style path that
+	# electron-builder's extraResources entry and afterPack hook already
+	# expect. This keeps the release pipeline agnostic of whether SPM or
+	# xcodebuild produced the artifacts.
+	@mkdir -p $(SIDECAR_DIR)/.build/arm64-apple-macosx/release
+	cp $(SIDECAR_DIR)/.build/xcode-release/Build/Products/Release/freekoko-sidecar \
+	   $(SIDECAR_BIN)
+	cp $(SIDECAR_DIR)/.build/xcode-release/Build/Products/Release/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib \
+	   $(SIDECAR_DIR)/.build/arm64-apple-macosx/release/mlx.metallib
 	@test -x $(SIDECAR_BIN) || { echo "ERROR: sidecar binary missing at $(SIDECAR_BIN)"; exit 1; }
+	@test -f $(SIDECAR_DIR)/.build/arm64-apple-macosx/release/mlx.metallib || \
+	  { echo "ERROR: mlx.metallib missing"; exit 1; }
 	@echo "Binary: $(SIDECAR_BIN)"
 	@echo "Verifying binary is relocatable (no build-tree absolute paths)..."
 	@otool -L $(SIDECAR_BIN) | awk 'NR>1 && $$1 !~ /^@rpath/ && $$1 !~ /^\/usr\// && $$1 !~ /^\/System\//' | \

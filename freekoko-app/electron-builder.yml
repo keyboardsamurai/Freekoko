@@ -42,6 +42,13 @@ extraResources:
     filter: ["**/*.safetensors"]
   - from: ../upstream-kokoro/LocalPackages/kokoro-ios/Resources/config.json
     to: kokoro/config.json
+  # Tray-menu icons. Resolved at runtime by TrayMenu.iconFor() via
+  # `process.resourcesPath/tray/`. Missing this entry leaves the packaged
+  # app with no tray icon — and since LSUIElement=true hides the dock
+  # icon, the app becomes completely invisible on install.
+  - from: resources/tray
+    to: tray
+    filter: ["**/*.png"]
 
 # afterPack runs install_name_tool + codesign on the bundled sidecar so the
 # dylibs resolve from inside the .app and launchd accepts the binary.

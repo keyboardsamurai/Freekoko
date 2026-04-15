@@ -14,7 +14,12 @@ import type {
   TtsRequest,
   VoiceInfo,
 } from './types';
-import type { NavigatePayload } from '@shared/types';
+import type {
+  NavigatePayload,
+  TtsChunkEvent,
+  TtsDoneEvent,
+  TtsErrorEvent,
+} from '@shared/types';
 
 // The preload script shape (duplicated here intentionally — we cannot
 // `import type` from electron/preload.ts because that pulls in Node
@@ -29,6 +34,8 @@ interface ElectronAPI {
   };
   tts: {
     generate: (req: TtsRequest) => Promise<unknown>;
+    generateStream: (req: TtsRequest) => Promise<unknown>;
+    abort: (requestId: string) => Promise<void>;
     voices: () => Promise<unknown>;
     health: () => Promise<unknown>;
   };
@@ -68,6 +75,9 @@ interface ElectronAPI {
   onTtsProgress: (
     cb: (progress: TtsProgressEvent | TtsProgress) => void
   ) => () => void;
+  onTtsChunk: (cb: (event: TtsChunkEvent) => void) => () => void;
+  onTtsDone: (cb: (event: TtsDoneEvent) => void) => () => void;
+  onTtsError: (cb: (event: TtsErrorEvent) => void) => () => void;
   onNavigate: (cb: (payload: NavigatePayload) => void) => () => void;
 }
 
@@ -131,6 +141,45 @@ export async function generateTTS(
       message: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+/**
+ * Begin a streaming TTS generation. On success, returns a `requestId`
+ * used to filter subsequent `tts:chunk` / `tts:done` / `tts:error`
+ * events and to abort. On failure (validation error from the main
+ * process, IPC error, or malformed response) returns an `IpcError`.
+ */
+export async function generateTTSStream(
+  req: TtsRequest
+): Promise<{ requestId: string } | IpcError> {
+  try {
+    const res = await api().tts.generateStream(req);
+    if (isIpcError(res)) return res;
+    if (
+      res &&
+      typeof res === 'object' &&
+      'requestId' in res &&
+      typeof (res as { requestId: unknown }).requestId === 'string'
+    ) {
+      return { requestId: (res as { requestId: string }).requestId };
+    }
+    return { error: 'unknown_response' };
+  } catch (err) {
+    return {
+      error: 'ipc_failed',
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * Abort an in-flight streaming generation. Resolves once the main process
+ * acknowledges the cancellation request — the actual audio cutoff arrives
+ * shortly after via a `tts:done` (with `partial: true`, if ≥1 chunk had
+ * arrived) or `tts:error` (code `'aborted'`, if no chunk arrived) event.
+ */
+export async function abortTTS(requestId: string): Promise<void> {
+  return api().tts.abort(requestId);
 }
 
 export async function listVoices(): Promise<VoiceInfo[]> {
@@ -268,6 +317,12 @@ export const onSettingsChanged = (cb: (settings: AppSettings) => void) =>
 export const onTtsProgress = (
   cb: (progress: TtsProgressEvent | TtsProgress) => void
 ) => api().onTtsProgress(cb);
+export const onTtsChunk = (cb: (event: TtsChunkEvent) => void) =>
+  api().onTtsChunk(cb);
+export const onTtsDone = (cb: (event: TtsDoneEvent) => void) =>
+  api().onTtsDone(cb);
+export const onTtsError = (cb: (event: TtsErrorEvent) => void) =>
+  api().onTtsError(cb);
 export const onNavigate = (cb: (payload: NavigatePayload) => void) =>
   api().onNavigate(cb);
 

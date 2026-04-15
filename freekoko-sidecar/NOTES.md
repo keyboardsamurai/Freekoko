@@ -45,32 +45,50 @@ proper git submodule (see ARCHITECTURE.md §1), this patch needs to either:
 **Do not bump the upstream pin blindly** — verify `BenchmarkTimer`
 compiles against the chosen MLXUtilsLibrary version first.
 
-## 2. Duplicate MLX Obj-C class warnings at process startup
+## 2. Duplicate MLX Obj-C class warnings at process startup — FIXED
 
-When the sidecar launches, stderr prints ~100 lines of:
+**Historical symptom.** When the sidecar launched, stderr printed ~100
+lines of:
 
 ```
 objc[PID]: Class _TtC3MLX8MLXArray is implemented in both
   .../libMisakiSwift.dylib and .../libKokoroSwift.dylib ...
 ```
 
-**Cause.** Both `KokoroSwift` and `MisakiSwift` link `mlx-swift`
-statically, and both are dynamic libraries that the sidecar binary loads.
-The Objective-C runtime complains once per duplicated class.
+**Cause.** Upstream `KokoroSwift` and `MisakiSwift` both declared their
+SPM products as `type: .dynamic` and both statically linked `mlx-swift`.
+So the release build produced two dylibs, each with a full copy of MLX's
+Objective-C classes. At dyld load, the ObjC runtime registered MLX
+classes from one dylib, then flagged every class in the other as a
+duplicate.
 
-**Impact.** None observed at runtime — MLX routes through one
-implementation and ignores the other. Tests and the HTTP server run
-normally.
+**Not harmless.** We saw a real multi-chunk playback crash
+(`metal::malloc Resource limit (499000) exceeded` at array.cpp:323) that
+was almost certainly aggravated by this: two MLX runtime instances =
+two independent Metal buffer pools, each maintaining their own cached
+allocations and never coordinating when the device hit its
+`recommendedMaxWorkingSetSize`.
 
-**Mitigation path.** This is a packaging problem for
-`upstream-kokoro/LocalPackages/kokoro-ios` and `mlalma/MisakiSwift`. The
-fix is to make one of them depend on the other transitively rather than
-both linking MLX statically. Track under a separate upstream issue; the
-warnings are harmless for the Electron-facing sidecar.
+**Fix applied.**
+1. Vendored `mlalma/MisakiSwift` 1.0.6 into
+   `upstream-kokoro/LocalPackages/MisakiSwift/` and flipped its
+   product to `type: .static`.
+2. Flipped `upstream-kokoro/LocalPackages/kokoro-ios/Package.swift`
+   (KokoroSwift) from `type: .dynamic` to `type: .static` for the same
+   reason.
+3. Updated KokoroSwift's manifest to consume the vendored MisakiSwift
+   via `.package(path: "../MisakiSwift")` instead of the URL-based pin.
 
-**Electron impact.** The supervisor in `freekoko-app` must read
-`child.stderr` as a log stream, not treat the duplicate-class lines as
-crash indicators. Pre-filter them out of the in-memory ring buffer.
+**Result.** No third-party dylibs ship alongside the sidecar any more.
+`libKokoroSwift.dylib` and `libMisakiSwift.dylib` are gone; their code
+(plus a single copy of MLX) is absorbed into the `freekoko-sidecar`
+executable. Startup warning count went from ~100 to 0. The
+`electron-builder afterPack` hook still runs its relocation / signing
+logic, but now has no dylibs to relocate — which is the desired outcome.
+
+**Tradeoff.** The executable is larger (no shared dylib), which is fine
+for a local sidecar. If multiple consumers ever need the same MLX
+binary, revert by flipping one product type back to `.dynamic`.
 
 ## 3. Bundle.module / R1 (ARCHITECTURE §7.R1)
 

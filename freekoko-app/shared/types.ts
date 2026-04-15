@@ -85,6 +85,11 @@ export interface HistoryItem {
   wavFilename: string;
   /** First 120 chars of `text`, used for list rendering. */
   previewText: string;
+  /**
+   * Set to `true` when the WAV was assembled from a streaming generation that
+   * was aborted before completion. Missing / `false` → fully-rendered.
+   */
+  partial?: boolean;
 }
 
 /** Result of a successful `tts:generate` IPC call. */
@@ -105,6 +110,45 @@ export interface TtsProgressEvent {
   totalChunks?: number;
   /** Resulting history item id — set on 'done'. */
   itemId?: string;
+}
+
+// --- Streaming TTS events (new `/tts/stream` path) -------------------------
+
+/**
+ * Per-chunk frame pushed on `on:tts-chunk`. `pcm` is the raw Float32
+ * little-endian byte payload (length is always a multiple of 4 — i.e.
+ * `pcm.byteLength / 4` == sample count). The renderer constructs a
+ * Float32Array view via `new Float32Array(pcm.buffer, pcm.byteOffset,
+ * pcm.byteLength / 4)` for zero-copy playback scheduling.
+ */
+export interface TtsChunkEvent {
+  requestId: string;
+  chunkIndex: number;
+  totalChunks: number;
+  sampleRate: number;
+  pcm: Uint8Array;
+}
+
+/**
+ * Emitted on `on:tts-done` when a streaming generation finishes (either
+ * because the sidecar reached EOF, or because the user aborted after at
+ * least one chunk had arrived). `partial: true` indicates the latter.
+ */
+export interface TtsDoneEvent {
+  requestId: string;
+  item: HistoryItem;
+  wavPath: string;
+  partial: boolean;
+}
+
+/**
+ * Emitted on `on:tts-error` for fetch errors or for aborts that happened
+ * before any chunk arrived (so no history entry is written).
+ */
+export interface TtsErrorEvent {
+  requestId: string;
+  code: string;
+  message: string;
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -135,6 +179,8 @@ export const IPC = {
 
   // TTS
   TTS_GENERATE: 'tts:generate',
+  TTS_GENERATE_STREAM: 'tts:generate-stream',
+  TTS_ABORT: 'tts:abort',
   TTS_VOICES: 'tts:voices',
   TTS_HEALTH: 'tts:health',
 
@@ -167,6 +213,9 @@ export const IPC = {
   ON_LOG_LINE: 'on:log-line',
   ON_SETTINGS_CHANGED: 'on:settings-changed',
   ON_TTS_PROGRESS: 'on:tts-progress',
+  ON_TTS_CHUNK: 'on:tts-chunk',
+  ON_TTS_DONE: 'on:tts-done',
+  ON_TTS_ERROR: 'on:tts-error',
   ON_NAVIGATE: 'on:navigate',
 } as const;
 

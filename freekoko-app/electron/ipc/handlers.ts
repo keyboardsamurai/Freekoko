@@ -1,4 +1,5 @@
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron';
 import log from 'electron-log';
 
@@ -6,6 +7,9 @@ import type {
   AppSettings,
   HistoryItem,
   IpcError,
+  TtsChunkEvent,
+  TtsDoneEvent,
+  TtsErrorEvent,
   TtsGenerateResult,
   TtsProgressEvent,
   TtsRequest,
@@ -15,8 +19,23 @@ import { IPC } from '../types';
 import type { SidecarSupervisor } from '../sidecar/SidecarSupervisor';
 import type { SettingsStore } from '../store/SettingsStore';
 import type { LogCapture } from '../sidecar/LogCapture';
-import { SidecarHttpError, fetchTTS, fetchVoices } from '../sidecar/SidecarClient';
+import {
+  SidecarHttpError,
+  fetchTTS,
+  fetchTTSStream,
+  fetchVoices,
+} from '../sidecar/SidecarClient';
 import { HistoryStore } from '../history/HistoryStore';
+import { encodeWav } from '../history/wavEncode';
+
+/**
+ * Sidecar inserts 0.15s of silence between speech chunks when assembling
+ * the WAV payload that `/tts` returns (see TTSHandler.swift). For the
+ * streaming path the wire frames carry speech-only PCM, so the main
+ * process re-inserts the same gap before WAV encoding to keep the saved
+ * file byte-identical to what `/tts` produces.
+ */
+const INTER_CHUNK_SILENCE_SAMPLES = 3600; // 0.15s × 24000 Hz
 
 export interface HandlerDeps {
   supervisor: SidecarSupervisor;
@@ -142,6 +161,195 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
       return wrapError(err, 'tts_failed');
     }
   });
+
+  // --- Streaming TTS (`/tts/stream`) ---------------------------------
+  // One AbortController per in-flight requestId. Cleared on completion,
+  // abort, or error. Map is process-wide because aborts may arrive on a
+  // different IPC frame than the originator.
+  const streamAborts = new Map<string, AbortController>();
+
+  ipcMain.handle(IPC.TTS_GENERATE_STREAM, async (evt, arg: TtsRequest) => {
+    const status = supervisor.status();
+    if (status.state !== 'running') {
+      return {
+        error: 'server_not_running',
+        message: `Server is ${status.state}; start it before generating.`,
+      } satisfies IpcError;
+    }
+
+    const req: TtsRequest = {
+      text: String(arg?.text ?? ''),
+      voice: String(arg?.voice ?? settings.get('defaultVoice')),
+      speed: Number(arg?.speed ?? settings.get('defaultSpeed')),
+    };
+    if (!req.text.trim()) {
+      return { error: 'text_empty', message: 'Text is empty.' } satisfies IpcError;
+    }
+    // Note: no `text_too_long` cap here — streaming removes the 8k limit.
+
+    const requestId = crypto.randomUUID();
+    const controller = new AbortController();
+    streamAborts.set(requestId, controller);
+    const sender = evt.sender;
+    const startedAt = Date.now();
+    const port = status.port;
+
+    // Kick off the stream on a background promise. Return immediately
+    // so the renderer can wire up its event listeners and start the
+    // AudioContext while data is in-flight.
+    void (async () => {
+      const receivedChunks: Uint8Array[] = [];
+      let sampleRate = 0;
+      let totalChunks = 0;
+      let firstError: { code: string; message: string } | null = null;
+
+      const safeSend = (channel: string, payload: unknown) => {
+        if (!sender || sender.isDestroyed()) return;
+        try {
+          sender.send(channel, payload);
+        } catch {
+          /* renderer went away mid-stream */
+        }
+      };
+
+      try {
+        const result = await fetchTTSStream(
+          port,
+          req,
+          (frame) => {
+            sampleRate = frame.sampleRate;
+            totalChunks = frame.totalChunks;
+            receivedChunks[frame.chunkIndex] = frame.pcm;
+            const evtPayload: TtsChunkEvent = {
+              requestId,
+              chunkIndex: frame.chunkIndex,
+              totalChunks: frame.totalChunks,
+              sampleRate: frame.sampleRate,
+              pcm: frame.pcm,
+            };
+            safeSend(IPC.ON_TTS_CHUNK, evtPayload);
+          },
+          controller.signal
+        );
+        sampleRate = result.sampleRate || sampleRate;
+        totalChunks = result.totalChunks || totalChunks;
+      } catch (err) {
+        if (err instanceof SidecarHttpError) {
+          firstError = { code: err.code, message: err.message };
+        } else if (err instanceof Error) {
+          if (err.name === 'AbortError') {
+            firstError = { code: 'aborted', message: 'Generation aborted.' };
+          } else {
+            const cause = (err as { cause?: { code?: string } }).cause;
+            if (cause?.code === 'ECONNREFUSED') {
+              firstError = {
+                code: 'sidecar_unreachable',
+                message: err.message,
+              };
+            } else {
+              firstError = { code: 'tts_failed', message: err.message };
+            }
+          }
+        } else {
+          firstError = { code: 'tts_failed', message: String(err) };
+        }
+      } finally {
+        streamAborts.delete(requestId);
+      }
+
+      // Compact the sparse `receivedChunks` array (in case any indices
+      // are missing — they shouldn't be, but defend against it).
+      const orderedChunks = receivedChunks.filter(
+        (c): c is Uint8Array => c instanceof Uint8Array
+      );
+
+      const aborted = controller.signal.aborted;
+      const hasAnyChunks = orderedChunks.length > 0;
+
+      // Terminal-state priority:
+      //   1. User abort (controller.signal.aborted): if any chunks arrived
+      //      persist a partial WAV + fire tts:done{partial:true}; otherwise
+      //      fire a silent tts:error{code:'aborted'}. User abort wins over
+      //      any accompanying AbortError the fetch surfaces in `firstError`.
+      //   2. Real (non-abort) failure: never persist. Fire tts:error with
+      //      the original error code, even if some chunks had arrived —
+      //      conflating sidecar crashes with intentional aborts hides bugs.
+      //   3. Clean completion: persist full WAV + fire tts:done{partial:false}.
+      if (aborted) {
+        if (!hasAnyChunks) {
+          safeSend(IPC.ON_TTS_ERROR, {
+            requestId,
+            code: 'aborted',
+            message: 'Generation aborted before any audio.',
+          } satisfies TtsErrorEvent);
+          return;
+        }
+        // else fall through to persist the partial
+      } else if (firstError) {
+        safeSend(IPC.ON_TTS_ERROR, {
+          requestId,
+          code: firstError.code,
+          message: firstError.message,
+        } satisfies TtsErrorEvent);
+        return;
+      }
+
+      // Clean completion OR user abort after ≥1 chunk.
+      try {
+        const float32 = assembleFloat32WithSilence(
+          orderedChunks,
+          INTER_CHUNK_SILENCE_SAMPLES
+        );
+        const wavBuffer = encodeWav(float32, sampleRate || 24000);
+        const item: HistoryItem = await history.add({
+          text: req.text,
+          voice: req.voice,
+          speed: req.speed,
+          wavBuffer,
+          sampleCount: float32.length,
+          durationMs: Date.now() - startedAt,
+          partial: aborted,
+        });
+        const wavPath = path.join(history.dir, item.wavFilename);
+        const doneEvt: TtsDoneEvent = {
+          requestId,
+          item,
+          wavPath,
+          partial: aborted,
+        };
+        safeSend(IPC.ON_TTS_DONE, doneEvt);
+      } catch (err) {
+        log.error('tts:generate-stream finalize failed', err);
+        const errEvt: TtsErrorEvent = {
+          requestId,
+          code: 'finalize_failed',
+          message: err instanceof Error ? err.message : String(err),
+        };
+        safeSend(IPC.ON_TTS_ERROR, errEvt);
+      }
+    })();
+
+    return { requestId };
+  });
+
+  ipcMain.handle(
+    IPC.TTS_ABORT,
+    async (_evt, arg: { requestId: string }) => {
+      const id = String(arg?.requestId ?? '');
+      if (!id) return { ok: false, error: 'invalid_request_id' } as const;
+      const ctrl = streamAborts.get(id);
+      if (ctrl) {
+        try {
+          ctrl.abort();
+        } catch {
+          /* already aborted */
+        }
+        streamAborts.delete(id);
+        return { ok: true } as const;
+      }
+      return { ok: true, alreadyDone: true } as const;
+    }
+  );
 
   ipcMain.handle(IPC.TTS_VOICES, async () => {
     const status = supervisor.status();
@@ -363,6 +571,36 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
     await shell.openExternal(url);
     return { ok: true };
   });
+}
+
+/**
+ * Concatenate received PCM chunks (raw Float32 LE bytes) into one
+ * Float32Array, inserting `silenceSamples` zero samples between
+ * consecutive chunks. Mirrors `TTSHandler.swift` so the saved WAV is
+ * byte-identical to `/tts` output.
+ */
+function assembleFloat32WithSilence(
+  chunks: Uint8Array[],
+  silenceSamples: number
+): Float32Array {
+  if (chunks.length === 0) return new Float32Array(0);
+  let totalSamples = 0;
+  for (const c of chunks) totalSamples += c.byteLength / 4;
+  totalSamples += silenceSamples * Math.max(0, chunks.length - 1);
+
+  const out = new Float32Array(totalSamples);
+  let offset = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    const c = chunks[i];
+    const view = new Float32Array(c.buffer, c.byteOffset, c.byteLength / 4);
+    out.set(view, offset);
+    offset += view.length;
+    if (i < chunks.length - 1) {
+      // Float32Array is zero-initialized; just advance the cursor.
+      offset += silenceSamples;
+    }
+  }
+  return out;
 }
 
 export function unregisterIpcHandlers(): void {

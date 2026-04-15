@@ -149,3 +149,41 @@
   color: var(--fg-faint);
   margin: 0 4px;
 }
+
+/* ----------------------------------------------------------------------------
+ * Streaming mode — scrubbing is disabled (forward-only until done) and the
+ * play/pause control gets a subtle pulse to telegraph "live audio."
+ * -------------------------------------------------------------------------- */
+.audio-transport[data-streaming='true'] .audio-scrub {
+  cursor: default;
+  pointer-events: none;
+}
+
+.audio-transport[data-streaming='true'] .audio-scrub .audio-scrub-thumb {
+  opacity: 0;
+}
+
+.audio-transport[data-streaming='true'] .audio-scrub-fill {
+  background: var(--fg-faint);
+}
+
+.audio-transport[data-streaming='true'] .audio-playpause {
+  animation: audio-stream-pulse 1.2s var(--ease) infinite;
+}
+
+@keyframes audio-stream-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.72;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .audio-transport[data-streaming='true'] .audio-playpause {
+    animation: none;
+    background-color: var(--accent-pulse);
+  }
+}

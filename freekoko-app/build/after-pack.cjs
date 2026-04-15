@@ -159,6 +159,45 @@ function relocateAbsoluteDylibs(binary, absoluteLoadPaths, sidecarDir) {
 }
 
 /**
+ * Copy SwiftPM/Xcode resource bundles next to the sidecar executable.
+ *
+ * Static Swift package libraries still rely on their generated
+ * `resource_bundle_accessor.swift` lookup code at runtime. For our packaged
+ * sidecar, `Bundle.module` resolves by looking adjacent to the executable, so
+ * the `*.bundle` directories from the Swift build products must be copied into
+ * `Contents/Resources/sidecar/`.
+ */
+function bundleSwiftResourceBundles(sourceDirs, sidecarDir) {
+  const seen = new Set();
+  for (const dir of sourceDirs) {
+    if (!fs.existsSync(dir)) continue;
+    const entries = fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name.endsWith('.bundle'));
+    for (const entry of entries) {
+      if (seen.has(entry.name)) continue;
+      seen.add(entry.name);
+      const src = path.join(dir, entry.name);
+      const dst = path.join(sidecarDir, entry.name);
+      if (!fs.existsSync(dst)) {
+        try {
+          fs.cpSync(src, dst, { recursive: true });
+          info(`bundled resource bundle ${entry.name}`);
+        } catch (e) {
+          warn(`failed to bundle resource bundle ${entry.name}: ${e.message}`);
+          continue;
+        }
+      }
+      try {
+        run('codesign', ['--force', '--sign', '-', dst]);
+      } catch (e) {
+        warn(`codesign of ${entry.name} failed: ${e.message}`);
+      }
+    }
+  }
+}
+
+/**
  * Remove build-tree rpaths and add standard .app rpaths.
  */
 function normalizeRpaths(binary, rpaths) {
@@ -273,6 +312,16 @@ module.exports = async function afterPack(context) {
     'arm64-apple-macosx',
     'release',
   );
+  const xcodeBuildDir = path.resolve(
+    packager.info.projectDir,
+    '..',
+    'freekoko-sidecar',
+    '.build',
+    'xcode-release',
+    'Build',
+    'Products',
+    'Release',
+  );
   if (fs.existsSync(swiftBuildDir)) {
     const dylibs = fs
       .readdirSync(swiftBuildDir)
@@ -290,9 +339,36 @@ module.exports = async function afterPack(context) {
         }
       }
     }
+
+    // MLX ships a Metal shader library that mx::default_metallib()
+    // loads at runtime. SPM's release build emits it as
+    // `<swiftBuildDir>/mlx.metallib`; MLX's loader searches the
+    // directory of the running binary. If it's missing, the sidecar
+    // fails model init with "Failed to load the default metallib"
+    // and the main process stays tray-less on the user's machine.
+    const metallibSrc = path.join(swiftBuildDir, 'mlx.metallib');
+    const metallibDst = path.join(sidecarDir, 'mlx.metallib');
+    if (fs.existsSync(metallibSrc)) {
+      if (!fs.existsSync(metallibDst)) {
+        try {
+          fs.copyFileSync(metallibSrc, metallibDst);
+          fs.chmodSync(metallibDst, 0o644);
+          info('bundled mlx.metallib');
+        } catch (e) {
+          warn(`failed to bundle mlx.metallib: ${e.message}`);
+        }
+      }
+    } else {
+      warn(
+        `mlx.metallib not found at ${metallibSrc}; sidecar will fail ` +
+          `to load MLX Metal shaders at runtime. Did 'make sidecar' run?`,
+      );
+    }
   } else {
     warn(`Swift build dir not found at ${swiftBuildDir}; no dylibs to bundle.`);
   }
+
+  bundleSwiftResourceBundles([swiftBuildDir, xcodeBuildDir], sidecarDir);
 
   // 4. Ad-hoc sign.
   try {

@@ -25,6 +25,12 @@ export interface HistoryAddInput {
   id?: string;
   /** Optional override; defaults to `new Date().toISOString()`. */
   createdAt?: string;
+  /**
+   * Set to `true` when the WAV came from a streaming generation that the
+   * user aborted. Persisted as a flag on the index entry. Missing /
+   * `false` → not stored on disk (back-compat with legacy index files).
+   */
+  partial?: boolean;
 }
 
 /**
@@ -102,6 +108,7 @@ export class HistoryStore {
       durationMs: input.durationMs,
       wavFilename,
       previewText,
+      ...(input.partial ? { partial: true } : {}),
     };
 
     this.items.unshift(item);
@@ -216,6 +223,9 @@ function makePreview(text: string): string {
 function isHistoryItem(x: unknown): x is HistoryItem {
   if (!x || typeof x !== 'object') return false;
   const o = x as Record<string, unknown>;
+  // `partial` is optional and back-compat: legacy entries omit it entirely.
+  const partialOk =
+    o.partial === undefined || typeof o.partial === 'boolean';
   return (
     typeof o.id === 'string' &&
     typeof o.createdAt === 'string' &&
@@ -225,7 +235,8 @@ function isHistoryItem(x: unknown): x is HistoryItem {
     typeof o.sampleCount === 'number' &&
     typeof o.durationMs === 'number' &&
     typeof o.wavFilename === 'string' &&
-    typeof o.previewText === 'string'
+    typeof o.previewText === 'string' &&
+    partialOk
   );
 }
 

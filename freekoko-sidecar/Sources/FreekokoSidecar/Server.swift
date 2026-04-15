@@ -21,6 +21,9 @@ struct Server {
         router.post("/tts") { request, context in
             try await TTSHandler.handle(request: request, context: context)
         }
+        router.post("/tts/stream") { request, context in
+            try await TTSHandler.handleStream(request: request, context: context)
+        }
         router.get("/voices") { request, context in
             try await VoicesHandler.handle(request: request, context: context)
         }

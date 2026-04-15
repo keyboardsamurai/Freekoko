@@ -37,7 +37,11 @@ let package = Package(
         ),
         .testTarget(
             name: "FreekokoSidecarTests",
-            dependencies: ["FreekokoSidecar"],
+            dependencies: [
+                "FreekokoSidecar",
+                .product(name: "Hummingbird", package: "hummingbird"),
+                .product(name: "HummingbirdTesting", package: "hummingbird"),
+            ],
             path: "Tests/FreekokoSidecarTests"
         ),
     ]

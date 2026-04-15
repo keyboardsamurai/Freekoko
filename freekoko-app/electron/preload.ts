@@ -7,6 +7,9 @@ import {
   type LogEntry,
   type NavigatePayload,
   type ServerStatus,
+  type TtsChunkEvent,
+  type TtsDoneEvent,
+  type TtsErrorEvent,
   type TtsProgress,
   type TtsProgressEvent,
   type TtsRequest,
@@ -35,6 +38,10 @@ const electronAPI = {
   tts: {
     generate: (req: TtsRequest): Promise<unknown> =>
       ipcRenderer.invoke(IPC.TTS_GENERATE, req),
+    generateStream: (req: TtsRequest): Promise<{ requestId: string }> =>
+      ipcRenderer.invoke(IPC.TTS_GENERATE_STREAM, req),
+    abort: (requestId: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.TTS_ABORT, { requestId }),
     voices: (): Promise<unknown> => ipcRenderer.invoke(IPC.TTS_VOICES),
     health: (): Promise<unknown> => ipcRenderer.invoke(IPC.TTS_HEALTH),
   },
@@ -92,6 +99,12 @@ const electronAPI = {
     subscribe<AppSettings>(IPC.ON_SETTINGS_CHANGED, cb),
   onTtsProgress: (cb: (progress: TtsProgressEvent | TtsProgress) => void) =>
     subscribe<TtsProgressEvent | TtsProgress>(IPC.ON_TTS_PROGRESS, cb),
+  onTtsChunk: (cb: (event: TtsChunkEvent) => void): (() => void) =>
+    subscribe<TtsChunkEvent>(IPC.ON_TTS_CHUNK, cb),
+  onTtsDone: (cb: (event: TtsDoneEvent) => void): (() => void) =>
+    subscribe<TtsDoneEvent>(IPC.ON_TTS_DONE, cb),
+  onTtsError: (cb: (event: TtsErrorEvent) => void): (() => void) =>
+    subscribe<TtsErrorEvent>(IPC.ON_TTS_ERROR, cb),
   onNavigate: (cb: (payload: NavigatePayload) => void) =>
     subscribe<NavigatePayload>(IPC.ON_NAVIGATE, cb),
 };

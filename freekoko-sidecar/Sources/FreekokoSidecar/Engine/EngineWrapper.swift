@@ -116,8 +116,14 @@ actor EngineWrapper {
 
     /// Generate Float32 audio samples (24kHz mono). Delegates directly
     /// to the underlying actor — all calls are naturally serialized there.
+    ///
+    /// `Task.checkCancellation()` runs at entry so that callers (notably
+    /// `/tts/stream`) get deterministic between-chunk cancellation: this actor
+    /// serializes all `generate` calls, so the check fires before the next
+    /// MLX inference begins.
     func generate(text: String, voice: String, speed: Float) async throws -> [Float] {
-        try await KokoroEngine.shared.generateAudio(
+        try Task.checkCancellation()
+        return try await KokoroEngine.shared.generateAudio(
             text: text,
             voiceId: voice,
             speed: speed

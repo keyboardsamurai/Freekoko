@@ -1,5 +1,5 @@
 {
-  "originHash" : "be0308d06021e64708d5d34a51f354421ea10431ebcbb13b786d4115d81eab59",
+  "originHash" : "c1c0810d8b3766a1ddf94c2079e4e6625a85ae096175b5b99974df45dc07d349",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -17,15 +17,6 @@
       "state" : {
         "revision" : "a2ed0a0294de56e18ba55344eafc801a7a385a90",
         "version" : "2.22.0"
-      }
-    },
-    {
-      "identity" : "misakiswift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/mlalma/MisakiSwift",
-      "state" : {
-        "revision" : "6835a1ce4a8854075c89f18ff75c74b13ef58e15",
-        "version" : "1.0.6"
       }
     },
     {

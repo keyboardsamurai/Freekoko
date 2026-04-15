@@ -114,6 +114,15 @@ export function HistoryItem({
           <span aria-hidden="true">{voice.flag}</span>{' '}
           {voice.displayName} ({voice.gender.charAt(0)}, A)
         </span>
+        {item.partial && (
+          <span
+            className="history-item-partial-badge"
+            aria-label="Partial generation"
+            title="This audio was stopped before generation finished"
+          >
+            Partial
+          </span>
+        )}
         <span className="history-item-duration muted">
           {formatDuration(item.durationMs)}
         </span>
