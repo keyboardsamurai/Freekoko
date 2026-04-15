@@ -301,9 +301,26 @@ module.exports = async function afterPack(context) {
   relocateAbsoluteDylibs(binary, inspect.absoluteLoadPaths, sidecarDir);
   normalizeRpaths(binary, inspect.rpaths);
 
-  // Also copy dylibs from the Swift build directory so @executable_path
-  // resolution finds them. The release build directory lives next to the
-  // sidecar source tree.
+  // Build-artifact source precedence.
+  //
+  // `make sidecar` (root Makefile) drives the build via `xcodebuild`, not
+  // `swift build -c release`. xcodebuild's output lives under
+  // `.build/xcode-release/Build/Products/Release/` and is the canonical
+  // source of `.bundle` resource directories and any `.dylib` artifacts.
+  // The Makefile then stages just two files — the `freekoko-sidecar`
+  // binary and a renamed `mlx.metallib` — into the SPM-style path
+  // `.build/arm64-apple-macosx/release/` so downstream tooling
+  // (electron-builder `extraResources`, this hook) has a stable layout.
+  //
+  // Rule: Xcode build dir is authoritative for bundles/dylibs. If it
+  // exists, we use ONLY it and ignore the SPM dir for those artifacts —
+  // otherwise a stale `swift build -c release` output could shadow the
+  // intended Xcode outputs and we'd ship the wrong bits. SPM remains the
+  // discovery point for `mlx.metallib` because that's where the Makefile
+  // deterministically stages it. If Xcode dir is missing, we fall back
+  // to SPM for bundles/dylibs with a loud warning — the resulting .app
+  // will likely be non-functional (see `freekoko-sidecar/NOTES.md` §1–§2
+  // for why SPM-only builds fail at runtime).
   const swiftBuildDir = path.resolve(
     packager.info.projectDir,
     '..',
@@ -322,12 +339,34 @@ module.exports = async function afterPack(context) {
     'Products',
     'Release',
   );
-  if (fs.existsSync(swiftBuildDir)) {
-    const dylibs = fs
-      .readdirSync(swiftBuildDir)
-      .filter((n) => n.endsWith('.dylib'));
+
+  const xcodeAvailable = fs.existsSync(xcodeBuildDir);
+  let artifactDirs;
+  if (xcodeAvailable) {
+    artifactDirs = [xcodeBuildDir];
+    info(`using Xcode build dir as bundle/dylib source: ${xcodeBuildDir}`);
+  } else if (fs.existsSync(swiftBuildDir)) {
+    artifactDirs = [swiftBuildDir];
+    warn(
+      `Xcode build dir missing at ${xcodeBuildDir}; falling back to SPM ` +
+        `output at ${swiftBuildDir}. The packaged .app will likely fail ` +
+        `at runtime — 'make sidecar' uses xcodebuild because SPM alone ` +
+        `cannot compile MLX's Metal kernels. Re-run 'make sidecar'.`,
+    );
+  } else {
+    artifactDirs = [];
+    warn(
+      `No Swift build output found (neither ${xcodeBuildDir} nor ` +
+        `${swiftBuildDir}); no bundles or dylibs to bundle.`,
+    );
+  }
+
+  // Copy dylibs from the selected artifact dir so @executable_path
+  // resolution finds them at runtime.
+  for (const srcDir of artifactDirs) {
+    const dylibs = fs.readdirSync(srcDir).filter((n) => n.endsWith('.dylib'));
     for (const d of dylibs) {
-      const src = path.join(swiftBuildDir, d);
+      const src = path.join(srcDir, d);
       const dst = path.join(sidecarDir, d);
       if (!fs.existsSync(dst)) {
         try {
@@ -339,36 +378,35 @@ module.exports = async function afterPack(context) {
         }
       }
     }
-
-    // MLX ships a Metal shader library that mx::default_metallib()
-    // loads at runtime. SPM's release build emits it as
-    // `<swiftBuildDir>/mlx.metallib`; MLX's loader searches the
-    // directory of the running binary. If it's missing, the sidecar
-    // fails model init with "Failed to load the default metallib"
-    // and the main process stays tray-less on the user's machine.
-    const metallibSrc = path.join(swiftBuildDir, 'mlx.metallib');
-    const metallibDst = path.join(sidecarDir, 'mlx.metallib');
-    if (fs.existsSync(metallibSrc)) {
-      if (!fs.existsSync(metallibDst)) {
-        try {
-          fs.copyFileSync(metallibSrc, metallibDst);
-          fs.chmodSync(metallibDst, 0o644);
-          info('bundled mlx.metallib');
-        } catch (e) {
-          warn(`failed to bundle mlx.metallib: ${e.message}`);
-        }
-      }
-    } else {
-      warn(
-        `mlx.metallib not found at ${metallibSrc}; sidecar will fail ` +
-          `to load MLX Metal shaders at runtime. Did 'make sidecar' run?`,
-      );
-    }
-  } else {
-    warn(`Swift build dir not found at ${swiftBuildDir}; no dylibs to bundle.`);
   }
 
-  bundleSwiftResourceBundles([swiftBuildDir, xcodeBuildDir], sidecarDir);
+  // MLX ships a Metal shader library that mx::default_metallib() loads at
+  // runtime. The Makefile stages it at `<swiftBuildDir>/mlx.metallib`
+  // (renamed from `mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib`
+  // under the Xcode derived-data tree). MLX's loader searches the
+  // directory of the running binary. If it's missing, the sidecar fails
+  // model init with "Failed to load the default metallib" and the main
+  // process stays tray-less on the user's machine.
+  const metallibSrc = path.join(swiftBuildDir, 'mlx.metallib');
+  const metallibDst = path.join(sidecarDir, 'mlx.metallib');
+  if (fs.existsSync(metallibSrc)) {
+    if (!fs.existsSync(metallibDst)) {
+      try {
+        fs.copyFileSync(metallibSrc, metallibDst);
+        fs.chmodSync(metallibDst, 0o644);
+        info('bundled mlx.metallib');
+      } catch (e) {
+        warn(`failed to bundle mlx.metallib: ${e.message}`);
+      }
+    }
+  } else {
+    warn(
+      `mlx.metallib not found at ${metallibSrc}; sidecar will fail ` +
+        `to load MLX Metal shaders at runtime. Did 'make sidecar' run?`,
+    );
+  }
+
+  bundleSwiftResourceBundles(artifactDirs, sidecarDir);
 
   // 4. Ad-hoc sign.
   try {
@@ -379,13 +417,19 @@ module.exports = async function afterPack(context) {
 
   // Also sign any dylibs we bundled — codesign cascades through rpath
   // resolution and unsigned dylibs in the same directory can trip
-  // gatekeeper.
+  // gatekeeper. Any failure here is fatal: an unsigned dylib next to the
+  // sidecar will be rejected by launchd / Gatekeeper at run time and
+  // crash the packaged .app on first spawn. Better to fail the DMG than
+  // to ship a broken bundle.
   for (const entry of fs.readdirSync(sidecarDir)) {
     if (entry.endsWith('.dylib')) {
       try {
         run('codesign', ['--force', '--sign', '-', path.join(sidecarDir, entry)]);
       } catch (e) {
-        warn(`codesign of ${entry} failed: ${e.message}`);
+        fail(
+          `codesign of bundled dylib ${entry} failed: ${e.message}. ` +
+            `Refusing to ship an unsigned dylib — it would crash the .app at launch.`,
+        );
       }
     }
   }

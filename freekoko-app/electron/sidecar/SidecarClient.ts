@@ -240,7 +240,6 @@ export class StreamFrameParser {
     }
     // Drain as many frames as the buffer allows. Each iteration must
     // either consume bytes (advance state) or break (need more data).
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       if (this.state === 'awaiting_preamble') {
         if (this.buf.length < PREAMBLE_BYTES) return;
@@ -348,7 +347,6 @@ export async function fetchTTSStream(
   let lastTotalChunks = 0;
 
   try {
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;

@@ -15,6 +15,46 @@ struct TTSRequest: Codable {
     let speed: Float?
 }
 
+/// Custom `x-freekoko-*` response headers. `HTTPField.Name.init(String)` is a
+/// failable initializer that only fails for names containing characters illegal
+/// in HTTP field names — these literals are all valid, but wrapping them in
+/// static constants initialized once at load time avoids littering the
+/// handlers with `try!`/`!` force-unwraps on fixed string literals.
+private enum FreekokoHeaders {
+    /// Crash at process start (not per-request) if any of these literals are
+    /// ever edited to something invalid.
+    static let voice: HTTPField.Name = {
+        guard let name = HTTPField.Name("x-freekoko-voice") else {
+            fatalError("invalid HTTP field name literal: x-freekoko-voice")
+        }
+        return name
+    }()
+    static let durationMs: HTTPField.Name = {
+        guard let name = HTTPField.Name("x-freekoko-duration-ms") else {
+            fatalError("invalid HTTP field name literal: x-freekoko-duration-ms")
+        }
+        return name
+    }()
+    static let sampleCount: HTTPField.Name = {
+        guard let name = HTTPField.Name("x-freekoko-sample-count") else {
+            fatalError("invalid HTTP field name literal: x-freekoko-sample-count")
+        }
+        return name
+    }()
+    static let totalChunks: HTTPField.Name = {
+        guard let name = HTTPField.Name("x-freekoko-total-chunks") else {
+            fatalError("invalid HTTP field name literal: x-freekoko-total-chunks")
+        }
+        return name
+    }()
+    static let sampleRate: HTTPField.Name = {
+        guard let name = HTTPField.Name("x-freekoko-sample-rate") else {
+            fatalError("invalid HTTP field name literal: x-freekoko-sample-rate")
+        }
+        return name
+    }()
+}
+
 enum TTSHandler {
 
     /// Silence inserted between chunks (~0.15s at 24 kHz).
@@ -101,9 +141,9 @@ enum TTSHandler {
         var headers: HTTPFields = [:]
         headers[.contentType] = "audio/wav"
         headers[.contentLength] = String(wav.count)
-        headers[HTTPField.Name("x-freekoko-voice")!] = validated.voice
-        headers[HTTPField.Name("x-freekoko-duration-ms")!] = String(durationMs)
-        headers[HTTPField.Name("x-freekoko-sample-count")!] = String(combined.count)
+        headers[FreekokoHeaders.voice] = validated.voice
+        headers[FreekokoHeaders.durationMs] = String(durationMs)
+        headers[FreekokoHeaders.sampleCount] = String(combined.count)
         return Response(
             status: .ok,
             headers: headers,
@@ -152,9 +192,9 @@ enum TTSHandler {
 
         var headers: HTTPFields = [:]
         headers[.contentType] = "application/octet-stream"
-        headers[HTTPField.Name("x-freekoko-voice")!] = voice
-        headers[HTTPField.Name("x-freekoko-total-chunks")!] = String(totalChunks)
-        headers[HTTPField.Name("x-freekoko-sample-rate")!] = String(sampleRate)
+        headers[FreekokoHeaders.voice] = voice
+        headers[FreekokoHeaders.totalChunks] = String(totalChunks)
+        headers[FreekokoHeaders.sampleRate] = String(sampleRate)
 
         let body = ResponseBody { writer in
             let startedAt = Date()

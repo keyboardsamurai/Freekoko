@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useHistoryStore } from '../store/useHistoryStore';
 import { HistoryItem } from '../components/HistoryItem';
-import { clearHistory, listHistory } from '../lib/ipc';
+import { clearHistory, isIpcError, listHistory } from '../lib/ipc';
 
 const PAGE_SIZE = 50;
 
@@ -19,6 +19,10 @@ export function HistoryView() {
     setError(null);
     try {
       const next = await listHistory({ limit: PAGE_SIZE, offset: 0 });
+      if (isIpcError(next)) {
+        setError(next.message ?? next.error);
+        return;
+      }
       setItems(next);
       setReachedEnd(next.length < PAGE_SIZE);
     } catch (e) {
@@ -36,6 +40,10 @@ export function HistoryView() {
         limit: PAGE_SIZE,
         offset: items.length,
       });
+      if (isIpcError(next)) {
+        setError(next.message ?? next.error);
+        return;
+      }
       if (next.length === 0) {
         setReachedEnd(true);
       } else {

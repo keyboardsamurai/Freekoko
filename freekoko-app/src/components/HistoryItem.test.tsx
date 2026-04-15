@@ -19,9 +19,12 @@ function installApi(overrides: Partial<ApiMock['history']> = {}): ApiMock {
   const api: ApiMock = {
     history: {
       list: vi.fn().mockResolvedValue([]),
-      readWav: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
+      readWav: vi.fn().mockResolvedValue({
+        ok: true,
+        bytes: new Uint8Array([1, 2, 3]),
+      }),
       get: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
-      delete: vi.fn().mockResolvedValue({ ok: true }),
+      delete: vi.fn().mockResolvedValue({ ok: true, removed: true }),
       saveWav: vi.fn().mockResolvedValue({ ok: true, savedPath: '/tmp/out.wav' }),
       clear: vi.fn().mockResolvedValue({ ok: true }),
       ...overrides,

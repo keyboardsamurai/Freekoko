@@ -19,7 +19,6 @@ import type {
   VoiceInfo,
 } from '../lib/types';
 import { useAppStore } from '../store/useAppStore';
-import { useHistoryStore } from '../store/useHistoryStore';
 
 /** Sample rate the sidecar always emits at. Used as the AudioContext rate. */
 const STREAM_SAMPLE_RATE = 24000;
@@ -68,7 +67,13 @@ function formatEstimate(minutes: number): string {
 
 export function GenerateView() {
   const status = useAppStore((s) => s.status);
-  const consumePrefill = useHistoryStore((s) => s.consumePrefill);
+  // Re-use Text → reads pending prefill from useAppStore (single canonical
+  // store; the previously-orphaned `useHistoryStore.consumePrefill` was
+  // removed in the IPC contract cleanup). The `nonce` field forces this
+  // effect to re-run when the user clicks Re-use Text on the same item
+  // twice in a row.
+  const pendingGenerate = useAppStore((s) => s.pendingGenerate);
+  const consumePendingGenerate = useAppStore((s) => s.consumePendingGenerate);
 
   const [text, setText] = useState('');
   const [voice, setVoice] = useState('');
@@ -120,16 +125,25 @@ export function GenerateView() {
     voicesFetchedAtRef.current = now;
     let alive = true;
     listVoices()
-      .then((v) => {
+      .then((res) => {
         if (!alive) return;
-        setVoices(v);
+        if (isIpcError(res)) {
+          // Surface as a banner so the user knows why the voice list is
+          // empty — distinguishes "sidecar outage" from "no voices loaded".
+          setError({
+            code: res.error,
+            message: friendlyError(res.error, res.message ?? 'Could not load voices.'),
+          });
+          return;
+        }
+        setVoices(res);
         // Fallback: if selected voice isn't available, pick the first.
-        if (v.length > 0 && !v.find((x) => x.id === voice)) {
-          setVoice((prev) => prev || v[0].id);
+        if (res.length > 0 && !res.find((x) => x.id === voice)) {
+          setVoice((prev) => prev || res[0].id);
         }
       })
       .catch(() => {
-        /* ignore */
+        /* ignore — IPC bridge unavailable is already surfaced elsewhere */
       });
     return () => {
       alive = false;
@@ -181,14 +195,21 @@ export function GenerateView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Consume pending prefill (from HistoryView "Re-use Text").
+  // Consume pending prefill (from HistoryView's "Re-use Text"). The
+  // `pendingGenerate.nonce` dependency causes this effect to re-fire even
+  // when the user clicks Re-use Text on the same item twice in a row.
   useEffect(() => {
-    const p = consumePrefill();
+    if (!pendingGenerate) return;
+    const p = consumePendingGenerate();
     if (p) {
       setText(p.text);
       if (p.voice) setVoice(p.voice);
     }
-  }, [consumePrefill]);
+    // We intentionally key on `nonce` (not the whole `pendingGenerate`)
+    // so that when this effect calls `consumePendingGenerate()` and clears
+    // the store, we don't re-run on the resulting `null`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingGenerate?.nonce]);
 
   const resetStreamingState = useCallback(() => {
     setIsGenerating(false);

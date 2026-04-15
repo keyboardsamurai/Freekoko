@@ -61,6 +61,12 @@ jobs:
         working-directory: freekoko-app
         run: npm ci
 
+      - name: Lint
+        working-directory: freekoko-app
+        # eslint --max-warnings 0; the "|| true" swallow has been removed
+        # from package.json so a real lint failure now breaks the job.
+        run: npm run lint
+
       - name: Typecheck
         working-directory: freekoko-app
         run: npm run typecheck
@@ -73,11 +79,44 @@ jobs:
         working-directory: freekoko-app
         run: npm run build
 
-      - name: Validate electron-builder config (dry run — no DMG)
-        working-directory: freekoko-app
-        # This does not produce a DMG. It exercises the YAML parser and
-        # the electron-builder plugin resolution. extraResources paths
-        # that do not exist (model weights, release sidecar binary) are
-        # surfaced as warnings; electron-builder succeeds anyway. The
-        # real release workflow runs the full pipeline.
-        run: npx --yes electron-builder --help >/dev/null
+  package-smoke:
+    name: Packaging smoke (make dmg-dir)
+    # macos-15 runners are Apple Silicon (required for MLX + arm64-only app)
+    runs-on: macos-15
+    timeout-minutes: 40
+    needs: [sidecar-test, electron-test]
+    steps:
+      - name: Checkout (with upstream-kokoro submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: freekoko-app/package-lock.json
+
+      - name: Verify host prerequisites
+        run: make check-deps
+
+      # Unlike the release pipeline, we skip `make download-models` — the
+      # dmg-dir target (npm run package:mac:dir) produces an unpacked .app
+      # and does not require weights on disk. electron-builder emits
+      # warnings for the missing extraResources; the smoke is still a
+      # real exercise of sidecar build + electron-builder packaging.
+      - name: Build Swift sidecar (release arm64)
+        run: make sidecar
+
+      - name: Package unpacked .app (no DMG, no model weights)
+        run: make dmg-dir
+
+      - name: Verify packaged .app structure
+        run: |
+          APP="freekoko-app/dist/mac-arm64/freekoko.app"
+          test -d "$APP" || { echo "ERROR: unpacked .app missing at $APP"; exit 1; }
+          test -x "$APP/Contents/Resources/sidecar/freekoko-sidecar" || \
+            { echo "ERROR: sidecar binary missing inside .app"; exit 1; }
+          test -f "$APP/Contents/Resources/sidecar/mlx.metallib" || \
+            { echo "ERROR: mlx.metallib missing next to sidecar"; exit 1; }

@@ -317,7 +317,6 @@ export function AudioPlayer({
         setDuration(nextStartTimeRef.current - startedAtRef.current);
         scheduleRaf();
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.error('AudioPlayer: failed to schedule chunk', err);
       }
     });

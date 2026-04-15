@@ -5,7 +5,6 @@
 
 import Foundation
 import Hummingbird
-import NIOCore
 
 enum HealthHandler {
 
@@ -28,15 +27,6 @@ enum HealthHandler {
             "uptime_seconds": Double(round(uptime * 100) / 100),
         ]
 
-        let data = try JSONSerialization.data(
-            withJSONObject: body,
-            options: [.sortedKeys]
-        )
-        let buffer = ByteBuffer(data: data)
-        return Response(
-            status: httpStatus,
-            headers: [.contentType: "application/json"],
-            body: .init(byteBuffer: buffer)
-        )
+        return try JSONResponse.make(body, status: httpStatus)
     }
 }

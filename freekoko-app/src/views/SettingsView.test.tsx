@@ -51,8 +51,9 @@ function makeApi(overrides: Partial<AppSettings> = {}): Api {
     },
     tts: {
       generate: vi.fn(),
+      generateStream: vi.fn(),
+      abort: vi.fn(),
       voices: vi.fn().mockResolvedValue(voices),
-      health: vi.fn(),
     },
     history: {
       list: vi.fn().mockResolvedValue([]),

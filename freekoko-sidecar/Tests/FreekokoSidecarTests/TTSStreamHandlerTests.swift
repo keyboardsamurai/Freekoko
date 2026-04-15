@@ -31,7 +31,10 @@ import XCTest
 /// Engine load is async + ~2–5 s; load it once and gate every test on the
 /// resulting state. Actor isolation keeps Swift 6 strict-concurrency happy
 /// while serialising the one-time load.
-private actor EngineState {
+///
+/// Shared across test files (see `TTSHandlerTests`) so the underlying
+/// `EngineWrapper.shared` is only initialized once per test process.
+actor EngineState {
     static let shared = EngineState()
 
     struct Status: Sendable {

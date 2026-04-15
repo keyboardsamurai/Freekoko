@@ -3,14 +3,15 @@ import type { HistoryItem } from '../lib/types';
 import {
   clearHistory as ipcClearHistory,
   deleteHistory as ipcDeleteHistory,
+  isIpcError,
   listHistory as ipcListHistory,
 } from '../lib/ipc';
 
 interface HistoryState {
   items: HistoryItem[];
   isLoading: boolean;
-  /** Text/voice staged by "Re-use Text" for the Generate view. */
-  pendingPrefill: { text: string; voice: string } | null;
+  /** Latest IPC error from `loadHistory()`; `null` while healthy. */
+  error: string | null;
 
   // Actions
   setItems: (items: HistoryItem[]) => void;
@@ -18,24 +19,28 @@ interface HistoryState {
   add: (item: HistoryItem) => void;
   remove: (id: string) => Promise<boolean>;
   clear: () => Promise<boolean>;
-  reuseItem: (id: string) => { text: string; voice: string } | null;
-  consumePrefill: () => { text: string; voice: string } | null;
   replayLast: () => HistoryItem | null;
 }
 
 export const useHistoryStore = create<HistoryState>((set, get) => ({
   items: [],
   isLoading: false,
-  pendingPrefill: null,
+  error: null,
 
   setItems: (items) => set({ items }),
 
   async loadHistory() {
-    set({ isLoading: true });
+    set({ isLoading: true, error: null });
     try {
-      const items = await ipcListHistory({ limit: 500 });
-      set({ items });
-      return items;
+      const res = await ipcListHistory({ limit: 500 });
+      if (isIpcError(res)) {
+        // Failure is visible — keep prior items intact so the UI doesn't
+        // blink to empty during a transient outage.
+        set({ error: res.message ?? res.error });
+        return get().items;
+      }
+      set({ items: res });
+      return res;
     } finally {
       set({ isLoading: false });
     }
@@ -57,20 +62,6 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     const res = await ipcClearHistory(true);
     if (res.ok) set({ items: [] });
     return res.ok;
-  },
-
-  reuseItem(id) {
-    const item = get().items.find((x) => x.id === id);
-    if (!item) return null;
-    const prefill = { text: item.text, voice: item.voice };
-    set({ pendingPrefill: prefill });
-    return prefill;
-  },
-
-  consumePrefill() {
-    const p = get().pendingPrefill;
-    if (p) set({ pendingPrefill: null });
-    return p;
   },
 
   replayLast() {

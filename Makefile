@@ -4,7 +4,15 @@ UPSTREAM_DIR  := upstream-kokoro
 RESOURCES_SRC := $(UPSTREAM_DIR)/Resources
 SIDECAR_BIN   := $(SIDECAR_DIR)/.build/arm64-apple-macosx/release/freekoko-sidecar
 
-.PHONY: all sidecar sidecar-release app dmg dmg-dir dev clean check-deps download-models test help
+# Source of truth for the Kokoro weights filename. Derived from the shared
+# checksum manifest so renaming the weights upstream only requires updating
+# scripts/model-checksums.txt (which download-models.sh already consumes).
+# Picks the first manifest entry whose filename has no '/' — i.e. the
+# top-level weights file, not the per-voice embeddings under voices/.
+MODEL_CHECKSUMS := scripts/model-checksums.txt
+MODEL_WEIGHTS   := $(shell grep -E '^[0-9a-f]+[[:space:]]+[^/[:space:]]+$$' $(MODEL_CHECKSUMS) | head -1 | awk '{print $$2}')
+
+.PHONY: all sidecar sidecar-release app dmg dmg-dir dev clean check-deps download-models test screenshot help
 
 help:
 	@echo "freekoko — open-source Kokoro TTS desktop app"
@@ -19,6 +27,7 @@ help:
 	@echo "  make dmg              Produce distributable .dmg"
 	@echo "  make dmg-dir          Produce unpacked .app only (smoke test)"
 	@echo "  make clean            Remove build artifacts"
+	@echo "  make screenshot       Capture README screenshot (needs sidecar + models)"
 
 all: check-deps sidecar app
 
@@ -63,8 +72,10 @@ app:
 	cd $(APP_DIR) && npm ci && npm run build
 
 dmg: sidecar app
-	@test -f $(RESOURCES_SRC)/kokoro-v1_0.safetensors || \
-	  { echo "ERROR: Model weights not found. Run: make download-models"; exit 1; }
+	@test -n "$(MODEL_WEIGHTS)" || \
+	  { echo "ERROR: could not determine weights filename from $(MODEL_CHECKSUMS)"; exit 1; }
+	@test -f $(RESOURCES_SRC)/$(MODEL_WEIGHTS) || \
+	  { echo "ERROR: Model weights not found ($(MODEL_WEIGHTS)). Run: make download-models"; exit 1; }
 	@test -x $(SIDECAR_BIN) || \
 	  { echo "ERROR: release sidecar missing at $(SIDECAR_BIN)"; exit 1; }
 	cd $(APP_DIR) && npm run package:mac
@@ -90,6 +101,13 @@ dev:
 test:
 	cd $(SIDECAR_DIR) && swift test
 	cd $(APP_DIR) && npm test
+
+# Capture a README screenshot of the Generate view with Moby Dick prefilled.
+# Requires `make sidecar` + models on disk (the Electron app boots the real
+# sidecar so the voice list and running badge appear in the capture).
+# Writes to screens/generate.png at the repo root.
+screenshot:
+	cd $(APP_DIR) && npm run screenshot
 
 download-models:
 	@bash scripts/download-models.sh

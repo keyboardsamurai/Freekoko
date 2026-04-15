@@ -5,8 +5,17 @@ import log from 'electron-log';
 
 import type {
   AppSettings,
+  HistoryClearResult,
+  HistoryDeleteResult,
+  HistoryGetResult,
   HistoryItem,
+  HistoryReadWavResult,
+  HistorySaveWavResult,
   IpcError,
+  OkResult,
+  SettingsChooseDirectoryResult,
+  SettingsOpenPathResult,
+  TtsAbortResult,
   TtsChunkEvent,
   TtsDoneEvent,
   TtsErrorEvent,
@@ -27,15 +36,10 @@ import {
 } from '../sidecar/SidecarClient';
 import { HistoryStore } from '../history/HistoryStore';
 import { encodeWav } from '../history/wavEncode';
-
-/**
- * Sidecar inserts 0.15s of silence between speech chunks when assembling
- * the WAV payload that `/tts` returns (see TTSHandler.swift). For the
- * streaming path the wire frames carry speech-only PCM, so the main
- * process re-inserts the same gap before WAV encoding to keep the saved
- * file byte-identical to what `/tts` produces.
- */
-const INTER_CHUNK_SILENCE_SAMPLES = 3600; // 0.15s × 24000 Hz
+import {
+  INTER_CHUNK_SILENCE_SAMPLES,
+  assembleFloat32WithSilence,
+} from '../audio/assembleFloat32WithSilence';
 
 export interface HandlerDeps {
   supervisor: SidecarSupervisor;
@@ -200,7 +204,7 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
     void (async () => {
       const receivedChunks: Uint8Array[] = [];
       let sampleRate = 0;
-      let totalChunks = 0;
+      let _totalChunks = 0;
       let firstError: { code: string; message: string } | null = null;
 
       const safeSend = (channel: string, payload: unknown) => {
@@ -218,7 +222,7 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
           req,
           (frame) => {
             sampleRate = frame.sampleRate;
-            totalChunks = frame.totalChunks;
+            _totalChunks = frame.totalChunks;
             receivedChunks[frame.chunkIndex] = frame.pcm;
             const evtPayload: TtsChunkEvent = {
               requestId,
@@ -232,7 +236,7 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
           controller.signal
         );
         sampleRate = result.sampleRate || sampleRate;
-        totalChunks = result.totalChunks || totalChunks;
+        _totalChunks = result.totalChunks || _totalChunks;
       } catch (err) {
         if (err instanceof SidecarHttpError) {
           firstError = { code: err.code, message: err.message };
@@ -334,9 +338,9 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
 
   ipcMain.handle(
     IPC.TTS_ABORT,
-    async (_evt, arg: { requestId: string }) => {
+    async (_evt, arg: { requestId: string }): Promise<TtsAbortResult | IpcError> => {
       const id = String(arg?.requestId ?? '');
-      if (!id) return { ok: false, error: 'invalid_request_id' } as const;
+      if (!id) return { error: 'invalid_request_id' } satisfies IpcError;
       const ctrl = streamAborts.get(id);
       if (ctrl) {
         try {
@@ -345,38 +349,43 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
           /* already aborted */
         }
         streamAborts.delete(id);
-        return { ok: true } as const;
+        return { ok: true };
       }
-      return { ok: true, alreadyDone: true } as const;
+      return { ok: true, alreadyDone: true };
     }
   );
 
-  ipcMain.handle(IPC.TTS_VOICES, async () => {
-    const status = supervisor.status();
-    if (status.state !== 'running') {
-      return {
-        error: 'server_not_running',
-        message: `Server is ${status.state}.`,
-      } satisfies IpcError;
+  ipcMain.handle(
+    IPC.TTS_VOICES,
+    async (): Promise<VoiceInfo[] | IpcError> => {
+      const status = supervisor.status();
+      if (status.state !== 'running') {
+        return {
+          error: 'server_not_running',
+          message: `Server is ${status.state}.`,
+        } satisfies IpcError;
+      }
+      try {
+        const voices: VoiceInfo[] = await fetchVoices(status.port);
+        return voices;
+      } catch (err) {
+        log.error('tts:voices failed', err);
+        return wrapError(err, 'sidecar_unreachable');
+      }
     }
-    try {
-      const voices: VoiceInfo[] = await fetchVoices(status.port);
-      return voices;
-    } catch (err) {
-      log.error('tts:voices failed', err);
-      return wrapError(err, 'sidecar_unreachable');
-    }
-  });
+  );
 
-  ipcMain.handle(IPC.TTS_HEALTH, async () => {
-    // Health itself is real so the status badge can work; we just proxy the supervisor.
-    return supervisor.status();
-  });
+  // (TTS_HEALTH removed in IPC contract cleanup — no renderer callers.
+  // The status badge subscribes to `on:server-status` for live state and
+  // calls supervisor.status() directly when it needs an explicit poll.)
 
   // --- History ---------------------------------------------------------
   ipcMain.handle(
     IPC.HISTORY_LIST,
-    async (_evt, arg?: { limit?: number; offset?: number }) => {
+    async (
+      _evt,
+      arg?: { limit?: number; offset?: number }
+    ): Promise<HistoryItem[] | IpcError> => {
       try {
         const limit = Math.max(1, Math.min(arg?.limit ?? 50, 500));
         const offset = Math.max(0, arg?.offset ?? 0);
@@ -388,49 +397,69 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
     }
   );
 
-  ipcMain.handle(IPC.HISTORY_GET, async (_evt, arg: { id: string }) => {
-    try {
-      const id = String(arg?.id ?? '');
-      if (!id) return { error: 'invalid_id' } satisfies IpcError;
-      const hit = await history.get(id);
-      if (!hit) return { error: 'not_found' } satisfies IpcError;
-      return { item: hit.item, wavPath: hit.wavPath };
-    } catch (err) {
-      log.error('history:get failed', err);
-      return wrapError(err, 'history_get_failed');
+  ipcMain.handle(
+    IPC.HISTORY_GET,
+    async (_evt, arg: { id: string }): Promise<HistoryGetResult | IpcError> => {
+      try {
+        const id = String(arg?.id ?? '');
+        if (!id) return { error: 'invalid_id' } satisfies IpcError;
+        const hit = await history.get(id);
+        if (!hit) return { error: 'not_found' } satisfies IpcError;
+        return { item: hit.item, wavPath: hit.wavPath };
+      } catch (err) {
+        log.error('history:get failed', err);
+        return wrapError(err, 'history_get_failed');
+      }
     }
-  });
+  );
 
-  ipcMain.handle(IPC.HISTORY_READ_WAV, async (_evt, arg: { id: string }) => {
-    try {
-      const id = String(arg?.id ?? '');
-      if (!id) return { error: 'invalid_id' } satisfies IpcError;
-      const buf = await history.readWav(id);
-      if (!buf) return { error: 'not_found' } satisfies IpcError;
-      // Electron serializes Buffer as Uint8Array over IPC; renderer
-      // rebuilds a Blob from it.
-      return { ok: true, bytes: new Uint8Array(buf) };
-    } catch (err) {
-      log.error('history:read-wav failed', err);
-      return wrapError(err, 'history_read_failed');
+  ipcMain.handle(
+    IPC.HISTORY_READ_WAV,
+    async (
+      _evt,
+      arg: { id: string }
+    ): Promise<HistoryReadWavResult | IpcError> => {
+      try {
+        const id = String(arg?.id ?? '');
+        if (!id) return { error: 'invalid_id' } satisfies IpcError;
+        const buf = await history.readWav(id);
+        if (!buf) return { error: 'not_found' } satisfies IpcError;
+        // Electron serializes Buffer as Uint8Array over IPC. We hand the
+        // renderer exactly one canonical shape — `{ok:true, bytes}` — so
+        // the renderer never has to fall back through alternative
+        // deserializations.
+        return { ok: true, bytes: new Uint8Array(buf) };
+      } catch (err) {
+        log.error('history:read-wav failed', err);
+        return wrapError(err, 'history_read_failed');
+      }
     }
-  });
+  );
 
-  ipcMain.handle(IPC.HISTORY_DELETE, async (_evt, arg: { id: string }) => {
-    try {
-      const id = String(arg?.id ?? '');
-      if (!id) return { error: 'invalid_id' } satisfies IpcError;
-      const removed = await history.delete(id);
-      return { ok: true, removed };
-    } catch (err) {
-      log.error('history:delete failed', err);
-      return wrapError(err, 'history_delete_failed');
+  ipcMain.handle(
+    IPC.HISTORY_DELETE,
+    async (
+      _evt,
+      arg: { id: string }
+    ): Promise<HistoryDeleteResult | IpcError> => {
+      try {
+        const id = String(arg?.id ?? '');
+        if (!id) return { error: 'invalid_id' } satisfies IpcError;
+        const removed = await history.delete(id);
+        return { ok: true, removed };
+      } catch (err) {
+        log.error('history:delete failed', err);
+        return wrapError(err, 'history_delete_failed');
+      }
     }
-  });
+  );
 
   ipcMain.handle(
     IPC.HISTORY_SAVE_WAV,
-    async (_evt, arg: { id: string; destPath?: string }) => {
+    async (
+      _evt,
+      arg: { id: string; destPath?: string }
+    ): Promise<HistorySaveWavResult | IpcError> => {
       try {
         const id = String(arg?.id ?? '');
         if (!id) return { error: 'invalid_id' } satisfies IpcError;
@@ -451,7 +480,9 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
             filters: [{ name: 'WAV audio', extensions: ['wav'] }],
           });
           if (saveRes.canceled || !saveRes.filePath) {
-            return { ok: false, canceled: true };
+            // User dismissed the picker — not an error, but not a success
+            // either. The renderer treats `canceled: true` as a no-op.
+            return { ok: true, canceled: true };
           }
           destPath = saveRes.filePath;
         }
@@ -468,7 +499,10 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
 
   ipcMain.handle(
     IPC.HISTORY_CLEAR,
-    async (_evt, arg?: { confirmed?: boolean }) => {
+    async (
+      _evt,
+      arg?: { confirmed?: boolean }
+    ): Promise<HistoryClearResult | IpcError> => {
       if (!arg?.confirmed) {
         return {
           error: 'confirmation_required',
@@ -503,7 +537,10 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
   });
   ipcMain.handle(
     IPC.SETTINGS_CHOOSE_DIRECTORY,
-    async (_evt, arg?: { initial?: string }) => {
+    async (
+      _evt,
+      arg?: { initial?: string }
+    ): Promise<SettingsChooseDirectoryResult | IpcError> => {
       try {
         const initial = arg?.initial && typeof arg.initial === 'string' ? arg.initial : undefined;
         const res = await dialog.showOpenDialog({
@@ -512,36 +549,35 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
           properties: ['openDirectory', 'createDirectory'],
         });
         if (res.canceled || !res.filePaths?.[0]) {
-          return { ok: false, cancelled: true } as const;
+          // User dismissed the picker — explicit `canceled: true` so the
+          // renderer can distinguish from a real error.
+          return { ok: false, canceled: true };
         }
-        return { ok: true, path: res.filePaths[0] } as const;
+        return { ok: true, path: res.filePaths[0] };
       } catch (err) {
         log.error('settings:choose-directory failed', err);
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        } as const;
+        return wrapError(err, 'choose_directory_failed');
       }
     }
   );
   ipcMain.handle(
     IPC.SETTINGS_OPEN_PATH,
-    async (_evt, arg?: { target?: string }) => {
+    async (
+      _evt,
+      arg?: { target?: string }
+    ): Promise<SettingsOpenPathResult | IpcError> => {
       const target = arg?.target && typeof arg.target === 'string' ? arg.target : '';
       if (!target) {
-        return { ok: false, error: 'invalid_path' } as const;
+        return { error: 'invalid_path' } satisfies IpcError;
       }
       try {
         const msg = await shell.openPath(target);
         // shell.openPath returns '' on success, otherwise an error string.
-        if (msg) return { ok: false, error: msg } as const;
-        return { ok: true } as const;
+        if (msg) return { error: 'open_path_failed', message: msg } satisfies IpcError;
+        return { ok: true };
       } catch (err) {
         log.error('settings:open-path failed', err);
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        } as const;
+        return wrapError(err, 'open_path_failed');
       }
     }
   );
@@ -550,57 +586,30 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
     const limit = Math.max(1, Math.min(arg?.limit ?? 500, 1000));
     return logCapture.recent(limit);
   });
-  ipcMain.handle(IPC.LOGS_CLEAR, async () => {
+  ipcMain.handle(IPC.LOGS_CLEAR, async (): Promise<OkResult> => {
     logCapture.clear();
     return { ok: true };
   });
 
   // --- Window / App ----------------------------------------------------
-  ipcMain.handle(IPC.WINDOW_SHOW_MAIN, async () => {
+  ipcMain.handle(IPC.WINDOW_SHOW_MAIN, async (): Promise<OkResult> => {
     showMainWindow();
     return { ok: true };
   });
   ipcMain.handle(IPC.APP_GET_VERSION, async () => {
     return app.getVersion();
   });
-  ipcMain.handle(IPC.APP_OPEN_URL, async (_evt, arg: { url: string }) => {
-    const url = arg?.url ?? '';
-    if (!/^https?:\/\//i.test(url)) {
-      return { error: 'invalid_url' } satisfies IpcError;
+  ipcMain.handle(
+    IPC.APP_OPEN_URL,
+    async (_evt, arg: { url: string }): Promise<OkResult | IpcError> => {
+      const url = arg?.url ?? '';
+      if (!/^https?:\/\//i.test(url)) {
+        return { error: 'invalid_url' } satisfies IpcError;
+      }
+      await shell.openExternal(url);
+      return { ok: true };
     }
-    await shell.openExternal(url);
-    return { ok: true };
-  });
-}
-
-/**
- * Concatenate received PCM chunks (raw Float32 LE bytes) into one
- * Float32Array, inserting `silenceSamples` zero samples between
- * consecutive chunks. Mirrors `TTSHandler.swift` so the saved WAV is
- * byte-identical to `/tts` output.
- */
-function assembleFloat32WithSilence(
-  chunks: Uint8Array[],
-  silenceSamples: number
-): Float32Array {
-  if (chunks.length === 0) return new Float32Array(0);
-  let totalSamples = 0;
-  for (const c of chunks) totalSamples += c.byteLength / 4;
-  totalSamples += silenceSamples * Math.max(0, chunks.length - 1);
-
-  const out = new Float32Array(totalSamples);
-  let offset = 0;
-  for (let i = 0; i < chunks.length; i++) {
-    const c = chunks[i];
-    const view = new Float32Array(c.buffer, c.byteOffset, c.byteLength / 4);
-    out.set(view, offset);
-    offset += view.length;
-    if (i < chunks.length - 1) {
-      // Float32Array is zero-initialized; just advance the cursor.
-      offset += silenceSamples;
-    }
-  }
-  return out;
+  );
 }
 
 export function unregisterIpcHandlers(): void {

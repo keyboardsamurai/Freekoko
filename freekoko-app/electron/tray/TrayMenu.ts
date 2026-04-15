@@ -222,7 +222,6 @@ export function buildTrayTemplate(
 
 export class TrayMenu {
   private tray: Tray | null = null;
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private lastStatus: ServerStatus | null = null;
   private resourcesDir: string;
   private handlers: TrayMenuHandlers;

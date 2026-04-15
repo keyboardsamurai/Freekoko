@@ -168,6 +168,70 @@ export interface IpcError {
   phase?: string;
 }
 
+// --- IPC success-shape types -----------------------------------------------
+//
+// Failure across every IPC channel uses the canonical `IpcError` shape
+// above. Success shapes are channel-specific; the named interfaces below
+// are the source of truth for both `electron/preload.ts` and
+// `src/lib/ipc.ts` so the renderer can branch via `isIpcError(res)`.
+
+/** `tts:abort` success — the abort RPC always succeeds at the IPC layer. */
+export interface TtsAbortResult {
+  ok: true;
+  /** True when the requestId no longer mapped to a live AbortController. */
+  alreadyDone?: boolean;
+}
+
+/** `history:get` success. */
+export interface HistoryGetResult {
+  item: HistoryItem;
+  wavPath: string;
+}
+
+/** `history:read-wav` success. `bytes` is the raw WAV byte payload. */
+export interface HistoryReadWavResult {
+  ok: true;
+  bytes: Uint8Array;
+}
+
+/** `history:delete` success. `removed` is the in-memory delete result. */
+export interface HistoryDeleteResult {
+  ok: true;
+  removed: boolean;
+}
+
+/** `history:save-wav` success. `canceled` is set when the user closed the OS save dialog. */
+export interface HistorySaveWavResult {
+  ok: true;
+  /** Absolute path of the written file. Omitted when `canceled` is true. */
+  savedPath?: string;
+  /** True when the user dismissed the OS file picker. */
+  canceled?: boolean;
+}
+
+/** `history:clear` success. */
+export interface HistoryClearResult {
+  ok: true;
+}
+
+/** `settings:choose-directory` success. Mutually exclusive with the cancel/error variants. */
+export type SettingsChooseDirectoryResult =
+  | { ok: true; path: string }
+  | { ok: false; canceled: true };
+
+/** `settings:open-path` success. */
+export interface SettingsOpenPathResult {
+  ok: true;
+}
+
+/** `logs:clear` and `window:show-main` success — bare ack. */
+export interface OkResult {
+  ok: true;
+}
+
+/** `app:open-url` success — bare ack (failure returns `IpcError`). */
+export type AppOpenUrlResult = OkResult;
+
 // --- IPC channel names -----------------------------------------------------
 
 export const IPC = {
@@ -182,7 +246,6 @@ export const IPC = {
   TTS_GENERATE_STREAM: 'tts:generate-stream',
   TTS_ABORT: 'tts:abort',
   TTS_VOICES: 'tts:voices',
-  TTS_HEALTH: 'tts:health',
 
   // History
   HISTORY_LIST: 'history:list',

@@ -10,12 +10,13 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
-    "lint": "eslint . --ext .ts,.tsx --max-warnings 0 || true",
+    "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "test": "vitest run",
     "package:mac": "electron-vite build && electron-builder --config electron-builder.yml --mac --arm64",
     "package:mac:dir": "electron-vite build && electron-builder --config electron-builder.yml --mac --arm64 --dir",
-    "generate:tray-icons": "node scripts/generate-tray-icons.mjs"
+    "generate:tray-icons": "node scripts/generate-tray-icons.mjs",
+    "screenshot": "electron-vite build && node scripts/screenshot.mjs"
   },
   "dependencies": {
     "electron-log": "^5.2.0",
@@ -23,6 +24,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^20.11.0",
@@ -33,11 +35,14 @@
     "electron-builder": "^25.0.0",
     "electron-vite": "^3.1.0",
     "eslint": "^9.0.0",
+    "eslint-plugin-react-hooks": "^7.0.1",
     "happy-dom": "^20.9.0",
+    "playwright": "^1.59.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.5.0",
+    "typescript-eslint": "^8.58.2",
     "vite": "^6.0.0",
     "vitest": "^2.0.0"
   }

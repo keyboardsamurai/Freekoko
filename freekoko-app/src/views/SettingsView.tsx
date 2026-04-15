@@ -12,6 +12,7 @@ import { About } from '../components/About';
 import {
   chooseDirectory,
   getAllSettings,
+  isIpcError,
   listVoices,
   onNavigate,
   onSettingsChanged,
@@ -92,14 +93,20 @@ export function SettingsView() {
   }, []);
 
   // Best-effort voice list — only populates when the sidecar is running.
+  // Settings view tolerates failures silently and falls back to the
+  // FALLBACK_VOICES list — a voice-fetch failure here is not user-actionable
+  // (the user is configuring defaults, not generating). Renderers that DO
+  // care about distinguishing failure-vs-empty should branch on isIpcError.
   useEffect(() => {
     let alive = true;
     listVoices()
-      .then((list) => {
-        if (alive && list.length) setVoices(list);
+      .then((res) => {
+        if (!alive) return;
+        if (isIpcError(res)) return;
+        if (res.length) setVoices(res);
       })
       .catch(() => {
-        /* ignore */
+        /* ignore — fallback list keeps the picker usable */
       });
     return () => {
       alive = false;
@@ -149,9 +156,11 @@ export function SettingsView() {
     setBusy((b) => ({ ...b, outputDir: true }));
     try {
       const res = await chooseDirectory(settings.outputDir);
+      if (isIpcError(res)) return;
       if (res.ok) {
         await patch({ outputDir: res.path });
       }
+      // else: { ok:false, canceled:true } — user dismissed the picker.
     } finally {
       setBusy((b) => ({ ...b, outputDir: false }));
     }

@@ -2,17 +2,30 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 import {
   IPC,
+  type AppOpenUrlResult,
   type AppSettings,
+  type HistoryClearResult,
+  type HistoryDeleteResult,
+  type HistoryGetResult,
   type HistoryItem,
+  type HistoryReadWavResult,
+  type HistorySaveWavResult,
+  type IpcError,
   type LogEntry,
   type NavigatePayload,
+  type OkResult,
   type ServerStatus,
+  type SettingsChooseDirectoryResult,
+  type SettingsOpenPathResult,
+  type TtsAbortResult,
   type TtsChunkEvent,
   type TtsDoneEvent,
   type TtsErrorEvent,
+  type TtsGenerateResult,
   type TtsProgress,
   type TtsProgressEvent,
   type TtsRequest,
+  type VoiceInfo,
 } from '../shared/types';
 
 // Narrow helper: ipcRenderer.on returns void; we wrap to give renderer
@@ -36,32 +49,41 @@ const electronAPI = {
       ipcRenderer.invoke(IPC.SUPERVISOR_STATUS),
   },
   tts: {
-    generate: (req: TtsRequest): Promise<unknown> =>
+    generate: (req: TtsRequest): Promise<TtsGenerateResult | IpcError> =>
       ipcRenderer.invoke(IPC.TTS_GENERATE, req),
-    generateStream: (req: TtsRequest): Promise<{ requestId: string }> =>
+    generateStream: (
+      req: TtsRequest
+    ): Promise<{ requestId: string } | IpcError> =>
       ipcRenderer.invoke(IPC.TTS_GENERATE_STREAM, req),
-    abort: (requestId: string): Promise<void> =>
+    abort: (requestId: string): Promise<TtsAbortResult | IpcError> =>
       ipcRenderer.invoke(IPC.TTS_ABORT, { requestId }),
-    voices: (): Promise<unknown> => ipcRenderer.invoke(IPC.TTS_VOICES),
-    health: (): Promise<unknown> => ipcRenderer.invoke(IPC.TTS_HEALTH),
+    voices: (): Promise<VoiceInfo[] | IpcError> =>
+      ipcRenderer.invoke(IPC.TTS_VOICES),
   },
   history: {
-    list: (arg: { limit?: number; offset?: number } = {}): Promise<unknown> =>
+    list: (
+      arg: { limit?: number; offset?: number } = {}
+    ): Promise<HistoryItem[] | IpcError> =>
       ipcRenderer.invoke(IPC.HISTORY_LIST, arg),
-    get: (arg: { id: string }): Promise<unknown> =>
+    get: (arg: { id: string }): Promise<HistoryGetResult | IpcError> =>
       ipcRenderer.invoke(IPC.HISTORY_GET, arg),
-    delete: (arg: { id: string }): Promise<unknown> =>
+    delete: (arg: { id: string }): Promise<HistoryDeleteResult | IpcError> =>
       ipcRenderer.invoke(IPC.HISTORY_DELETE, arg),
-    saveWav: (arg: { id: string; destPath?: string }): Promise<unknown> =>
+    saveWav: (
+      arg: { id: string; destPath?: string }
+    ): Promise<HistorySaveWavResult | IpcError> =>
       ipcRenderer.invoke(IPC.HISTORY_SAVE_WAV, arg),
-    readWav: (arg: { id: string }): Promise<unknown> =>
+    readWav: (
+      arg: { id: string }
+    ): Promise<HistoryReadWavResult | IpcError> =>
       ipcRenderer.invoke(IPC.HISTORY_READ_WAV, arg),
     clear: (
       arg: { confirmed: boolean } = { confirmed: false }
-    ): Promise<unknown> => ipcRenderer.invoke(IPC.HISTORY_CLEAR, arg),
+    ): Promise<HistoryClearResult | IpcError> =>
+      ipcRenderer.invoke(IPC.HISTORY_CLEAR, arg),
   },
   settings: {
-    get: (key: keyof AppSettings): Promise<unknown> =>
+    get: (key: keyof AppSettings): Promise<AppSettings[keyof AppSettings]> =>
       ipcRenderer.invoke(IPC.SETTINGS_GET, key),
     set: (patch: Partial<AppSettings>): Promise<AppSettings> =>
       ipcRenderer.invoke(IPC.SETTINGS_SET, patch),
@@ -69,26 +91,26 @@ const electronAPI = {
       ipcRenderer.invoke(IPC.SETTINGS_GET_ALL),
     chooseDirectory: (
       initial?: string
-    ): Promise<{ ok: true; path: string } | { ok: false; cancelled?: boolean; error?: string }> =>
+    ): Promise<SettingsChooseDirectoryResult | IpcError> =>
       ipcRenderer.invoke(IPC.SETTINGS_CHOOSE_DIRECTORY, { initial }),
     openPath: (
       target: string
-    ): Promise<{ ok: true } | { ok: false; error: string }> =>
+    ): Promise<SettingsOpenPathResult | IpcError> =>
       ipcRenderer.invoke(IPC.SETTINGS_OPEN_PATH, { target }),
   },
   logs: {
     recent: (limit = 500): Promise<LogEntry[]> =>
       ipcRenderer.invoke(IPC.LOGS_RECENT, { limit }),
-    clear: (): Promise<{ ok: true }> => ipcRenderer.invoke(IPC.LOGS_CLEAR),
+    clear: (): Promise<OkResult> => ipcRenderer.invoke(IPC.LOGS_CLEAR),
   },
   window: {
-    showMain: (): Promise<{ ok: true }> =>
+    showMain: (): Promise<OkResult> =>
       ipcRenderer.invoke(IPC.WINDOW_SHOW_MAIN),
   },
   app: {
     getVersion: (): Promise<string> =>
       ipcRenderer.invoke(IPC.APP_GET_VERSION),
-    openUrl: (url: string): Promise<unknown> =>
+    openUrl: (url: string): Promise<AppOpenUrlResult | IpcError> =>
       ipcRenderer.invoke(IPC.APP_OPEN_URL, { url }),
   },
   onServerStatus: (cb: (status: ServerStatus) => void) =>
@@ -117,6 +139,5 @@ try {
 } catch (err) {
   // If context isolation is somehow off, surface the error loudly instead
   // of silently failing.
-  // eslint-disable-next-line no-console
   console.error('preload: exposeInMainWorld failed', err);
 }

@@ -60,8 +60,8 @@ export function getMainWindow(): BrowserWindow {
       sandbox: false,
     },
   });
-  const devUrl = process.env.ELECTRON_RENDERER_URL ?? 'http://localhost:5173';
-  if (!app.isPackaged) {
+  const devUrl = process.env.ELECTRON_RENDERER_URL;
+  if (devUrl) {
     mainWindow.loadURL(devUrl).catch((err) => log.error('loadURL failed:', err));
   } else {
     mainWindow
@@ -249,6 +249,7 @@ app.whenReady().then(async () => {
     rootDir: __dirname,
     resourcesPath: process.resourcesPath,
     logCapture,
+    binary: process.env.FREEKOKO_SIDECAR_BIN || undefined,
   });
   supervisor.on('status', (status: ServerStatus) => {
     broadcastToRenderer(IPC.ON_SERVER_STATUS, status);
@@ -296,6 +297,10 @@ app.whenReady().then(async () => {
     supervisor.start().catch((err) => {
       log.error('auto-start failed:', err);
     });
+  }
+
+  if (process.env.FREEKOKO_SCREENSHOT_MODE === '1') {
+    showMainWindow();
   }
 });
 

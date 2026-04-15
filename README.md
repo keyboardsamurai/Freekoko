@@ -6,6 +6,8 @@ A local HTTP API at `localhost:5002` + a menubar GUI, wrapped around the [Kokoro
 
 freekoko is MIT-licensed: no trial gate, no paid tier, no license server. It builds on [keyboardsamurai/kokoro-voice](https://github.com/keyboardsamurai/kokoro-voice) (the Swift/MLX inference core) and adds an HTTP sidecar + Electron UI on top.
 
+![freekoko Generate view — Moby Dick opening queued for speech](./screens/generate.png)
+
 ---
 
 ## Requirements

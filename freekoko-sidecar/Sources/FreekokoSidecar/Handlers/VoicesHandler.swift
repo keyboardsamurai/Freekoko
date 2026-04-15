@@ -6,7 +6,6 @@
 import Foundation
 import Hummingbird
 import KokoroVoiceShared
-import NIOCore
 
 enum VoicesHandler {
 
@@ -29,15 +28,6 @@ enum VoicesHandler {
             ]
         }
 
-        let data = try JSONSerialization.data(
-            withJSONObject: voices,
-            options: [.sortedKeys]
-        )
-        let buffer = ByteBuffer(data: data)
-        return Response(
-            status: .ok,
-            headers: [.contentType: "application/json"],
-            body: .init(byteBuffer: buffer)
-        )
+        return try JSONResponse.make(voices)
     }
 }
