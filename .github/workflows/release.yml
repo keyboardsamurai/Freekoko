@@ -32,6 +32,15 @@ jobs:
         with:
           submodules: recursive
 
+      # The vendored MLXUtilsLibrary@0.0.6 and kokoro-ios packages require
+      # Swift tools 6.2, which ships with Xcode 26. The default macos-15
+      # runner Xcode is 16.4 (Swift 6.1.2). See root CLAUDE.md for why the
+      # MLXUtilsLibrary pin is load-bearing.
+      - name: Select Xcode with Swift 6.2
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
       - name: Show environment
         run: |
           echo "macOS: $(sw_vers -productVersion)"
