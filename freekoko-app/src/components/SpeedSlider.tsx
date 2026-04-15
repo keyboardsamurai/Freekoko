@@ -39,7 +39,21 @@ export function SpeedSlider({ value, onChange, disabled }: Props) {
           title="Reset to 1.0x"
           aria-label="Reset speed to 1.0x"
         >
-          {'\u21BB'}
+          <svg
+            viewBox="0 0 12 12"
+            width="12"
+            height="12"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+            focusable="false"
+          >
+            <path d="M10 6a4 4 0 1 1-1.3-2.96" />
+            <path d="M10 2v2.5H7.5" />
+          </svg>
         </button>
       </div>
       <div className="speed-scale">

@@ -246,8 +246,15 @@ export function SettingsView() {
           ) : null}
           {portChangedVsRunning ? (
             <div className="settings-warning" role="status">
-              <span>
-                ⚠ Port change takes effect on next server restart.
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+              >
+                <WarnIcon />
+                Port change takes effect on next server restart.
               </span>
               <button
                 type="button"
@@ -356,7 +363,7 @@ export function SettingsView() {
               />
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="btn"
                 onClick={handleChooseDirectory}
                 disabled={busy.outputDir}
               >
@@ -364,7 +371,7 @@ export function SettingsView() {
               </button>
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="btn"
                 onClick={handleOpenFolder}
               >
                 Open Folder
@@ -416,6 +423,33 @@ export function SettingsView() {
 }
 
 // --- Helpers ----------------------------------------------------------
+
+/**
+ * 12px monochrome caution triangle — inherits color from the parent
+ * `.settings-warning` (amber). Stroked, not filled, to match macOS
+ * System-Settings-style inline notices.
+ */
+function WarnIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.25"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      style={{ flex: 'none' }}
+    >
+      <path d="M6 1.25 11 10.25 1 10.25 Z" />
+      <path d="M6 5 V7.25" />
+      <path d="M6 8.75 V8.75" />
+    </svg>
+  );
+}
 
 function groupVoicesByLanguage(
   voices: VoiceInfo[]

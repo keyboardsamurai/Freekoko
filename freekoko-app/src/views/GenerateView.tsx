@@ -227,8 +227,9 @@ export function GenerateView() {
         className={`char-counter${charOver ? ' char-over' : ''}${
           charWarn && !charOver ? ' char-warn' : ''
         }`}
+        aria-live="polite"
       >
-        {charCount.toLocaleString()} / {MAX_CHARS.toLocaleString()} characters
+        {charCount.toLocaleString()} / {MAX_CHARS.toLocaleString()}
       </div>
 
       <div className="controls-row">
@@ -252,13 +253,32 @@ export function GenerateView() {
           className="btn-generate"
           onClick={handleGenerate}
           disabled={!canGenerate}
+          aria-busy={isGenerating || undefined}
         >
-          {isGenerating ? progressLabel : '\u25B6  Generate Speech'}
+          {isGenerating ? (
+            <>
+              <span className="spinner" aria-hidden />
+              <span>{progressLabel}</span>
+            </>
+          ) : (
+            <>
+              <svg
+                viewBox="0 0 12 12"
+                width="11"
+                height="11"
+                aria-hidden
+                focusable="false"
+              >
+                <path d="M3 2l7 4-7 4z" fill="currentColor" />
+              </svg>
+              <span>Generate</span>
+            </>
+          )}
         </button>
       </div>
 
       {isGenerating && (
-        <div className="progress-row">
+        <div className="progress-row" role="status" aria-live="polite">
           <span className="spinner" aria-hidden />
           <span className="muted">{progressLabel}</span>
         </div>

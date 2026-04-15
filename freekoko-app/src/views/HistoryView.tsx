@@ -97,7 +97,19 @@ export function HistoryView() {
             disabled={loading}
             data-testid="history-refresh"
           >
-            ↻ Refresh
+            <svg
+              viewBox="0 0 12 12"
+              width="12"
+              height="12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              aria-hidden="true"
+            >
+              <path d="M2 6a4 4 0 1 1 .8 2.4" />
+              <path d="M2 2v2.5h2.5" />
+            </svg>
+            Refresh
           </button>
           <button
             type="button"
@@ -120,7 +132,7 @@ export function HistoryView() {
           <div className="history-empty" data-testid="history-empty">
             <p>No generations yet.</p>
             <p className="muted">
-              Head to Generate to create some.
+              Head to Generate to create your first voice clip.
             </p>
           </div>
         ) : (

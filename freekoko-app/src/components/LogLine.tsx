@@ -53,6 +53,7 @@ export function LogLine({ entry }: LogLineProps) {
   const fields = useMemo(() => formatFields(entry), [entry]);
   const event = entry.event ?? '';
   const msg = entry.msg ?? entry.message ?? '';
+  const levelLabel = entry.level.toUpperCase();
 
   return (
     <div
@@ -61,9 +62,7 @@ export function LogLine({ entry }: LogLineProps) {
       role="listitem"
     >
       <span className="log-ts">{time}</span>
-      <span className={`log-level log-level-${entry.level}`}>
-        {entry.level.toUpperCase()}
-      </span>
+      <span className={`log-level log-level-${entry.level}`}>{levelLabel}</span>
       <span className="log-event">{event}</span>
       <span className="log-msg">{msg}</span>
       {fields && <span className="log-fields">{fields}</span>}

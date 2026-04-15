@@ -2,13 +2,13 @@ import { useSidecar } from '../hooks/useSidecar';
 import type { ServerState } from '../lib/types';
 
 const LABEL: Record<ServerState, string> = {
-  idle: '○ Stopped',
-  starting: '◐ Starting…',
-  running: '● Running',
-  stopping: '◐ Stopping…',
-  crashed: '✕ Crashed',
-  port_in_use: '✕ Port in use',
-  error: '✕ Error',
+  idle: 'Stopped',
+  starting: 'Starting',
+  running: 'Running',
+  stopping: 'Stopping',
+  crashed: 'Crashed',
+  port_in_use: 'Port in use',
+  error: 'Error',
 };
 
 const COLOR_CLASS: Record<ServerState, string> = {
@@ -24,17 +24,15 @@ const COLOR_CLASS: Record<ServerState, string> = {
 export function StatusBadge() {
   const { status, startServer } = useSidecar();
   const label = LABEL[status.state];
-  const suffix =
-    status.state === 'running'
-      ? ` :${status.port}`
-      : status.errorMessage
-        ? `: ${status.errorMessage}`
-        : '';
   const cls = COLOR_CLASS[status.state];
   const clickable =
     status.state === 'crashed' ||
     status.state === 'port_in_use' ||
     status.state === 'error';
+  const suffixParts: string[] = [];
+  if (status.state === 'running') suffixParts.push(`:${status.port}`);
+  else if (status.errorMessage) suffixParts.push(status.errorMessage);
+  const suffix = suffixParts.length ? ` · ${suffixParts.join(' ')}` : '';
   return (
     <button
       type="button"
@@ -43,8 +41,8 @@ export function StatusBadge() {
       title={clickable ? 'Click to retry' : status.errorMessage ?? label}
       disabled={!clickable}
     >
-      {label}
-      {suffix}
+      <span>{label}</span>
+      {suffix && <span className="status-suffix">{suffix}</span>}
     </button>
   );
 }

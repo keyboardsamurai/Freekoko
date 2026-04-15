@@ -1,0 +1,151 @@
+/* ============================================================================
+ * AudioPlayer — minimal custom transport
+ *
+ * Design: a single 32px circular play/pause control leads the eye, a hairline
+ * scrub track carries the progress, and mono tabular timestamps anchor the
+ * right edge. Accent fills the control in the paused (ready-to-play) state
+ * and inverts to a neutral surface when playing — a quiet signal that the
+ * primary action is "pause" without shouting.
+ * ============================================================================ */
+
+.audio-transport {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+}
+
+.audio-playpause {
+  appearance: none;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #0a1420;
+  background: var(--accent);
+  transition: background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.audio-playpause:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.audio-playpause:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.audio-playpause:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.audio-playpause[data-state='playing'] {
+  background: var(--bg-surface-2);
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
+
+.audio-playpause[data-state='playing']:hover:not(:disabled) {
+  background: var(--bg-pressed);
+}
+
+.audio-playpause:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.audio-playpause svg {
+  display: block;
+}
+
+/* --- Scrub track --- */
+.audio-scrub {
+  position: relative;
+  flex: 1;
+  height: 14px; /* generous hit target; visible track is centered inside */
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.audio-scrub[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.audio-scrub-track {
+  position: relative;
+  width: 100%;
+  height: 3px;
+  background: var(--bg-surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+  transition: height var(--dur-fast) var(--ease);
+}
+
+.audio-scrub:hover:not([aria-disabled='true']) .audio-scrub-track,
+.audio-scrub:focus-visible .audio-scrub-track {
+  height: 5px;
+}
+
+.audio-scrub-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: var(--accent);
+  border-radius: inherit;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.audio-scrub-thumb {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--fg);
+  border: 2px solid var(--bg-app);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%) scale(0);
+  transition: transform var(--dur-fast) var(--ease);
+  pointer-events: none;
+}
+
+.audio-scrub:hover:not([aria-disabled='true']) .audio-scrub-thumb,
+.audio-scrub:focus-visible .audio-scrub-thumb,
+.audio-scrub[data-dragging='true'] .audio-scrub-thumb {
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.audio-scrub:focus-visible {
+  outline: none;
+}
+
+.audio-scrub:focus-visible .audio-scrub-track {
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+/* --- Time readout --- */
+.audio-time {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.audio-time .audio-time-sep {
+  color: var(--fg-faint);
+  margin: 0 4px;
+}

@@ -122,7 +122,7 @@ export function LogsView() {
         {filtered.length === 0 ? (
           <p className="muted logs-empty">
             {lines.length === 0
-              ? 'No sidecar logs yet. Start the server to see output.'
+              ? 'No sidecar output yet. Start the server to stream logs.'
               : `No ${filter.toUpperCase()} entries.`}
           </p>
         ) : (
@@ -147,7 +147,20 @@ export function LogsView() {
             onClick={handleJumpToBottom}
             data-testid="logs-new-pill"
           >
-            ↓ {pendingCount} new
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+            {pendingCount} new
           </button>
         )}
       </div>

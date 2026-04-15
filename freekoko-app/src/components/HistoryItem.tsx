@@ -138,7 +138,22 @@ export function HistoryItem({
             disabled={loading}
             data-testid="history-item-play"
           >
-            {loading ? 'Loading…' : '▶ Play'}
+            {loading ? (
+              'Loading…'
+            ) : (
+              <>
+                <svg
+                  viewBox="0 0 12 12"
+                  width="12"
+                  height="12"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <path d="M3 2.2a.5.5 0 0 1 .76-.43l6 3.8a.5.5 0 0 1 0 .86l-6 3.8A.5.5 0 0 1 3 9.8V2.2Z" />
+                </svg>
+                Play
+              </>
+            )}
           </button>
         )}
         <button
@@ -147,7 +162,21 @@ export function HistoryItem({
           onClick={handleReuse}
           data-testid="history-item-reuse"
         >
-          ↩ Re-use Text
+          <svg
+            viewBox="0 0 12 12"
+            width="12"
+            height="12"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M4 3 1.5 5.5 4 8" />
+            <path d="M1.5 5.5H8a2.5 2.5 0 0 1 0 5H6" />
+          </svg>
+          Re-use Text
         </button>
         <button
           type="button"
@@ -155,16 +184,43 @@ export function HistoryItem({
           onClick={handleSave}
           data-testid="history-item-save"
         >
-          ↓ Save As…
+          <svg
+            viewBox="0 0 12 12"
+            width="12"
+            height="12"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M6 1.5v6.5" />
+            <path d="M3 5.5 6 8.5 9 5.5" />
+            <path d="M2 10h8" />
+          </svg>
+          Save As…
         </button>
         <button
           type="button"
-          className="btn btn-danger"
+          className="btn btn-danger btn-icon"
           onClick={handleDelete}
           data-testid="history-item-delete"
           aria-label="Delete"
         >
-          ✕
+          <svg
+            viewBox="0 0 12 12"
+            width="12"
+            height="12"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            <path d="M3 3l6 6" />
+            <path d="M9 3l-6 6" />
+          </svg>
         </button>
       </div>
       {error && <p className="history-item-error">{error}</p>}
