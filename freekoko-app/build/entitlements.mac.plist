@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  freekoko macOS entitlements
+
+  These entitlements are required because KokoroSwift uses MLX Swift,
+  which compiles GPU kernels at runtime via Metal's JIT pipeline. The
+  hardened runtime (and therefore Apple notarization) is incompatible
+  with JIT in third-party unsigned binaries. freekoko ships UNSIGNED and
+  UN-NOTARIZED by intent. See .planning/ARCHITECTURE.md §7 R2.
+
+  - allow-jit                         MLX Metal shader JIT
+  - disable-library-validation        Loading unsigned KokoroSwift/MisakiSwift/MLX dylibs
+  - allow-unsigned-executable-memory  Fallback for JIT code-gen pages
+
+  Because these entitlements disqualify the build from notarization,
+  users must clear the quarantine attribute after install:
+
+      xattr -cr /Applications/freekoko.app
+
+  This is documented in README.md and INSTALL.md.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-executable-page-protection</key>
+  <true/>
+</dict>
+</plist>

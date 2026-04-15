@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Only one release can run at a time per tag.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # required for softprops/action-gh-release
+
+jobs:
+  build-dmg:
+    name: Build and publish DMG
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      # Keep build output noise down in CI; our scripts log what matters.
+      NPM_CONFIG_PROGRESS: "false"
+      # Capture the tag up-front so we never interpolate it into shell
+      # commands directly. github.ref_name comes from a push-tag event
+      # so it's effectively trusted, but we funnel it through env vars
+      # as defense-in-depth against future workflow trigger changes.
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Show environment
+        run: |
+          echo "macOS: $(sw_vers -productVersion)"
+          echo "Arch:  $(uname -m)"
+          echo "Xcode: $(xcodebuild -version | head -1)"
+          swift --version
+          echo "Tag:   $RELEASE_TAG"
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: freekoko-app/package-lock.json
+
+      - name: Verify host prerequisites
+        run: make check-deps
+
+      # The model weights are large (~326MB combined). Cache them by the
+      # checksum manifest so re-runs of the same release don't re-download
+      # them from HuggingFace.
+      - name: Cache model weights
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: upstream-kokoro/Resources
+          key: kokoro-models-${{ hashFiles('scripts/model-checksums.txt') }}
+          restore-keys: |
+            kokoro-models-
+
+      - name: Download models (if cache miss)
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: make download-models
+
+      - name: Verify models present
+        run: |
+          test -f upstream-kokoro/Resources/kokoro-v1_0.safetensors
+          ls upstream-kokoro/Resources/voices | head -5
+
+      - name: Build Swift sidecar (release arm64)
+        run: make sidecar
+
+      - name: Install Electron app deps
+        working-directory: freekoko-app
+        run: npm ci
+
+      - name: Build Electron app bundle
+        working-directory: freekoko-app
+        run: npm run build
+
+      - name: Package DMG (electron-builder)
+        working-directory: freekoko-app
+        # CSC_IDENTITY_AUTO_DISCOVERY=false keeps electron-builder from
+        # hunting for a signing identity we deliberately don't have.
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run package:mac
+
+      - name: Compute DMG SHA256
+        id: checksum
+        working-directory: freekoko-app/dist
+        run: |
+          DMG=$(ls *.dmg | head -1)
+          SHA=$(shasum -a 256 "$DMG" | awk '{print $1}')
+          echo "file=$DMG" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "$SHA  $DMG" > "$DMG.sha256"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        env:
+          ARTIFACT_NAME: freekoko-dmg-${{ github.ref_name }}
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: |
+            freekoko-app/dist/*.dmg
+            freekoko-app/dist/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        env:
+          DMG_SHA: ${{ steps.checksum.outputs.sha256 }}
+          DMG_FILE: ${{ steps.checksum.outputs.file }}
+        with:
+          name: "freekoko ${{ github.ref_name }}"
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
+          files: |
+            freekoko-app/dist/*.dmg
+            freekoko-app/dist/*.sha256
+          body: |
+            freekoko ${{ github.ref_name }} — macOS Apple Silicon build
+
+            **SHA-256** `${{ steps.checksum.outputs.sha256 }}`
+            **Artifact** `${{ steps.checksum.outputs.file }}`
+
+            freekoko ships **unsigned and un-notarized** by design: MLX
+            requires JIT, which is incompatible with Apple's hardened
+            runtime. See [`INSTALL.md`](../blob/main/INSTALL.md) for the
+            one-line Gatekeeper bypass.
+
+            - System requirements: macOS 15+, Apple Silicon (M1/M2/M3/M4)
+            - MIT licensed, no telemetry, no license gating
+            - Local HTTP API at `localhost:5002`

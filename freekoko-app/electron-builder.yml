@@ -1,0 +1,85 @@
+# electron-builder configuration for freekoko
+# Per .planning/ARCHITECTURE.md §5.2
+#
+# IMPORTANT: hardenedRuntime is intentionally FALSE (see R2 in ARCHITECTURE.md).
+# MLX requires JIT, which is incompatible with the hardened runtime. This means
+# the app cannot be notarized. Users must run `xattr -cr /Applications/freekoko.app`
+# once after install to clear the quarantine bit. See README.md and INSTALL.md.
+
+appId: app.freekoko
+productName: freekoko
+copyright: MIT License — freekoko contributors
+artifactName: "${productName}-${version}-${arch}.${ext}"
+
+# electron-builder picks up assets (icon.icns, entitlements.mac.plist, etc.)
+# from the buildResources directory.
+directories:
+  buildResources: build
+  output: dist
+
+# File layout of the asar bundle. The build outputs from electron-vite live
+# in out/. Everything else (sources, tests, TS configs, dev tooling) is
+# excluded to keep the .app bundle small.
+files:
+  - "out/**/*"
+  - "shared/**/*"
+  - "package.json"
+  - "!**/*.map"
+  - "!**/*.test.*"
+  - "!**/node_modules/.cache/**"
+  - "!**/__tests__/**"
+
+# extraResources end up in Contents/Resources/ of the packaged .app.
+# The Swift sidecar and model weights live here (outside asar so the
+# binary can be execve'd directly).
+extraResources:
+  - from: ../freekoko-sidecar/.build/arm64-apple-macosx/release/freekoko-sidecar
+    to: sidecar/freekoko-sidecar
+  - from: ../upstream-kokoro/Resources/kokoro-v1_0.safetensors
+    to: kokoro/kokoro-v1_0.safetensors
+  - from: ../upstream-kokoro/Resources/voices
+    to: kokoro/voices
+    filter: ["**/*.safetensors"]
+  - from: ../upstream-kokoro/LocalPackages/kokoro-ios/Resources/config.json
+    to: kokoro/config.json
+
+# afterPack runs install_name_tool + codesign on the bundled sidecar so the
+# dylibs resolve from inside the .app and launchd accepts the binary.
+afterPack: ./build/after-pack.cjs
+
+asar: true
+
+mac:
+  category: public.app-category.utilities
+  target:
+    - target: dmg
+      arch: arm64
+  minimumSystemVersion: "15.0"
+  # MUST be false — MLX requires JIT which is blocked by the hardened runtime.
+  # See ARCHITECTURE.md §7 R2.
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  # Ad-hoc sign with entitlements. Not notarized (and cannot be — see above).
+  identity: null
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    LSUIElement: true
+    NSHumanReadableCopyright: "MIT License — freekoko contributors"
+    CFBundleDocumentTypes: []
+    # Disable app-transport-security exception block — freekoko makes no
+    # outbound network calls, only localhost HTTP to the sidecar.
+    NSAppTransportSecurity:
+      NSAllowsLocalNetworking: true
+
+dmg:
+  title: "freekoko ${version}"
+  writeUpdateInfo: false
+  contents:
+    - x: 130
+      y: 220
+      type: file
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
