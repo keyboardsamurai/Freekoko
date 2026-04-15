@@ -13,8 +13,8 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "test": "vitest run",
-    "package:mac": "electron-vite build && electron-builder --config electron-builder.yml --mac --arm64",
-    "package:mac:dir": "electron-vite build && electron-builder --config electron-builder.yml --mac --arm64 --dir",
+    "package:mac": "electron-vite build && electron-builder --config electron-builder.yml --mac --arm64 --publish never",
+    "package:mac:dir": "electron-vite build && electron-builder --config electron-builder.yml --mac --arm64 --dir --publish never",
     "generate:tray-icons": "node scripts/generate-tray-icons.mjs",
     "screenshot": "electron-vite build && node scripts/screenshot.mjs"
   },

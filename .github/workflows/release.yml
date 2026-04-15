@@ -95,9 +95,11 @@ jobs:
         working-directory: freekoko-app
         # CSC_IDENTITY_AUTO_DISCOVERY=false keeps electron-builder from
         # hunting for a signing identity we deliberately don't have.
+        # No GH_TOKEN here: publishing is handled by softprops/action-gh-release
+        # below. electron-builder is invoked with `--publish never` (see the
+        # package:mac npm script) so it won't try to resolve a publish target.
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run package:mac
 
       - name: Compute DMG SHA256
