@@ -90,6 +90,7 @@ function inspectLoadCommands(binary) {
   const lines = out.split('\n');
   const rpaths = [];
   const absoluteLoadPaths = [];
+  const allLoadNames = [];
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
@@ -108,6 +109,7 @@ function inspectLoadCommands(binary) {
         const m = lines[j].match(/^\s+name\s+(.*?)\s+\(offset/);
         if (m) {
           const name = m[1];
+          allLoadNames.push(name);
           if (
             name.startsWith('/') &&
             !name.startsWith('/usr/lib/') &&
@@ -121,7 +123,7 @@ function inspectLoadCommands(binary) {
     }
     i++;
   }
-  return { rpaths, absoluteLoadPaths };
+  return { rpaths, absoluteLoadPaths, allLoadNames };
 }
 
 /**
@@ -445,6 +447,33 @@ module.exports = async function afterPack(context) {
   } else {
     info('all dylib load commands are now relative (@rpath / system).');
   }
+
+  // Fail-fast: any @rpath/*.framework/... load command means xcodebuild
+  // produced a Swift framework that this hook does not know how to bundle
+  // (we only copy `.dylib` files from the build dir, not `.framework`
+  // directories). Shipping the DMG anyway would dyld-crash on first
+  // launch — see issue #1 where KokoroSwift was linked dynamically and
+  // the resulting framework was never copied into the .app, so the
+  // sidecar died with "Library not loaded: @rpath/KokoroSwift.framework/...".
+  //
+  // The fix is upstream of this hook: flip the offending SPM product to
+  // `type: .static` (see upstream-kokoro/LocalPackages/*/Package.swift
+  // and freekoko-sidecar/NOTES.md §2). This check just makes sure the
+  // mistake can never silently ship again.
+  const frameworkRefs = inspect.allLoadNames.filter((n) =>
+    /@rpath\/[^/]+\.framework\//.test(n),
+  );
+  if (frameworkRefs.length > 0) {
+    fail(
+      `Sidecar links against ${frameworkRefs.length} @rpath framework(s) that ` +
+        `are NOT bundled into the .app:\n  ` +
+        frameworkRefs.join('\n  ') +
+        `\nThis would dyld-crash at launch (see issue #1). The producing SPM ` +
+        `product must be declared 'type: .static' so the symbols link into ` +
+        `the sidecar binary directly. Refusing to package a broken DMG.`,
+    );
+  }
+
   info(`final rpaths: ${JSON.stringify(inspect.rpaths)}`);
   info('afterPack complete.');
 };

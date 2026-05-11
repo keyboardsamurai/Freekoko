@@ -9,16 +9,27 @@ let package = Package(
     .iOS(.v18), .macOS(.v15)
   ],
   products: [
+    // freekoko fork: .static (was .dynamic upstream). With MisakiSwift
+    // already flipped to .static, making KokoroSwift static too absorbs
+    // every MLX consumer into the sidecar executable. Result: one MLX
+    // copy, registered once by dyld — zero "Class X implemented in both"
+    // warnings. The executable gets larger (no shared dylib), but that's
+    // fine for a local sidecar that never shares its MLX with anything
+    // else in the app bundle.
     .library(
       name: "KokoroSwift",
-      type: .dynamic,
+      type: .static,
       targets: ["KokoroSwift"]
     ),
   ],
   dependencies: [
     .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.29.1"),
     // .package(url: "https://github.com/mlalma/eSpeakNGSwift", from: "1.0.1"),
-    .package(url: "https://github.com/mlalma/MisakiSwift", from: "1.0.4"),
+    // freekoko fork: MisakiSwift vendored locally with type: .static so it
+    // merges into libKokoroSwift.dylib instead of producing a second dylib
+    // that redundantly embeds MLX. See ../MisakiSwift/Package.swift for
+    // the rationale + freekoko-sidecar/NOTES.md §2.
+    .package(path: "../MisakiSwift"),
     .package(url: "https://github.com/mlalma/MLXUtilsLibrary.git", from: "0.0.6")
   ],
   targets: [
