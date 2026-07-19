@@ -26,6 +26,12 @@ import { isCompatibleSystem, platformErrorMessage } from './platform';
 
 app.setName('freekoko');
 
+// A closed stdout/stderr pipe (launching terminal exited, `| head`, etc.)
+// must never crash the app: without these handlers a console.log after the
+// pipe closes raises EPIPE as an uncaught exception.
+process.stdout.on('error', () => {});
+process.stderr.on('error', () => {});
+
 // Enforce single instance — any second launch focuses the main window.
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
