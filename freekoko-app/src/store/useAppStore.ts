@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { ServerStatus } from '../lib/types';
 
-export type Tab = 'generate' | 'history' | 'logs' | 'settings';
+export type Tab = 'generate' | 'audiobook' | 'history' | 'logs' | 'settings';
 
 export interface PendingGenerate {
   text: string;

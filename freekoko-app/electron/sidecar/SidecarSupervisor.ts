@@ -56,6 +56,9 @@ export class SidecarSupervisor extends EventEmitter {
   private startedAt: Date | null = null;
   private errorMessage: string | undefined;
   private healthPollTimer: NodeJS.Timeout | null = null;
+  /** Resolver for the poll loop's current sleep — invoked on cancel so the
+   *  awaiting async frame settles instead of being stranded forever. */
+  private healthPollWake: (() => void) | null = null;
   private running = false;
 
   readonly logCapture: LogCapture;
@@ -182,10 +185,7 @@ export class SidecarSupervisor extends EventEmitter {
       this.running = false;
       this.child = null;
       const stopping = this.intentionalStop;
-      if (this.healthPollTimer) {
-        clearTimeout(this.healthPollTimer);
-        this.healthPollTimer = null;
-      }
+      this.cancelHealthPollSleep();
       // Terminal diagnostic states are sticky across child exit —
       // do not clobber them with 'idle'.
       if (
@@ -239,10 +239,7 @@ export class SidecarSupervisor extends EventEmitter {
     }
     this.intentionalStop = true;
     this.setState('stopping');
-    if (this.healthPollTimer) {
-      clearTimeout(this.healthPollTimer);
-      this.healthPollTimer = null;
-    }
+    this.cancelHealthPollSleep();
     const child = this.child;
     if (!graceful) {
       try {
@@ -361,10 +358,12 @@ export class SidecarSupervisor extends EventEmitter {
           return;
         }
       }
-      await new Promise((res) => {
+      await new Promise<void>((res) => {
+        this.healthPollWake = res;
         this.healthPollTimer = setTimeout(res, interval);
         this.healthPollTimer.unref?.();
       });
+      this.healthPollWake = null;
       interval = Math.min(Math.round(interval * 1.5), HEALTH_MAX_INTERVAL_MS);
     }
   }
@@ -392,6 +391,21 @@ export class SidecarSupervisor extends EventEmitter {
       });
     }, delay);
     t.unref?.();
+  }
+
+  /**
+   * Cancel the poll loop's pending sleep. Resolving the wake (not just
+   * clearing the timer) lets the awaiting frame in pollHealthUntilReady()
+   * run, re-check `state`, and exit — clearTimeout alone would strand that
+   * promise forever.
+   */
+  private cancelHealthPollSleep(): void {
+    if (this.healthPollTimer) {
+      clearTimeout(this.healthPollTimer);
+      this.healthPollTimer = null;
+    }
+    this.healthPollWake?.();
+    this.healthPollWake = null;
   }
 
   private hardStop(): void {

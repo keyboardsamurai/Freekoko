@@ -16,6 +16,9 @@ import type {
 } from './types';
 import type {
   AppOpenUrlResult,
+  AudiobookJob,
+  AudiobookProgressEvent,
+  AudiobookResult,
   HistoryClearResult,
   HistoryDeleteResult,
   HistoryGetResult,
@@ -50,6 +53,11 @@ interface ElectronAPI {
     ) => Promise<{ requestId: string } | IpcError>;
     abort: (requestId: string) => Promise<TtsAbortResult | IpcError>;
     voices: () => Promise<VoiceInfo[] | IpcError>;
+  };
+  audiobook: {
+    chooseFiles: () => Promise<string[] | IpcError>;
+    start: (job: AudiobookJob) => Promise<AudiobookResult | IpcError>;
+    cancel: () => Promise<OkResult>;
   };
   history: {
     list: (
@@ -98,6 +106,9 @@ interface ElectronAPI {
   onTtsChunk: (cb: (event: TtsChunkEvent) => void) => () => void;
   onTtsDone: (cb: (event: TtsDoneEvent) => void) => () => void;
   onTtsError: (cb: (event: TtsErrorEvent) => void) => () => void;
+  onAudiobookProgress: (
+    cb: (event: AudiobookProgressEvent) => void
+  ) => () => void;
   onNavigate: (cb: (payload: NavigatePayload) => void) => () => void;
 }
 
@@ -287,6 +298,32 @@ export async function listVoices(): Promise<VoiceInfo[] | IpcError> {
   }
 }
 
+// --- Audiobook ---------------------------------------------------------
+/** Open a multi-file picker for .txt/.md; returns paths sorted by basename. */
+export async function chooseAudiobookFiles(): Promise<string[] | IpcError> {
+  try {
+    const res = await api().audiobook.chooseFiles();
+    if (isIpcError(res)) return res;
+    if (Array.isArray(res)) return res;
+    return { error: 'unknown_response', message: 'chooseFiles payload was not an array.' };
+  } catch (err) {
+    return { error: 'ipc_failed', message: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Start a batch job. Resolves when the whole batch finishes (or is cancelled). */
+export async function startAudiobook(
+  job: AudiobookJob
+): Promise<AudiobookResult | IpcError> {
+  try {
+    return await api().audiobook.start(job);
+  } catch (err) {
+    return { error: 'ipc_failed', message: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export const cancelAudiobook = () => api().audiobook.cancel();
+
 // --- History -----------------------------------------------------------
 /**
  * List history entries. Returns the array on success or `IpcError` on
@@ -403,6 +440,9 @@ export const onTtsDone = (cb: (event: TtsDoneEvent) => void) =>
   api().onTtsDone(cb);
 export const onTtsError = (cb: (event: TtsErrorEvent) => void) =>
   api().onTtsError(cb);
+export const onAudiobookProgress = (
+  cb: (event: AudiobookProgressEvent) => void
+) => api().onAudiobookProgress(cb);
 export const onNavigate = (cb: (payload: NavigatePayload) => void) =>
   api().onNavigate(cb);
 

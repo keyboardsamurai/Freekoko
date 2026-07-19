@@ -4,6 +4,9 @@ import {
   IPC,
   type AppOpenUrlResult,
   type AppSettings,
+  type AudiobookJob,
+  type AudiobookProgressEvent,
+  type AudiobookResult,
   type HistoryClearResult,
   type HistoryDeleteResult,
   type HistoryGetResult,
@@ -59,6 +62,13 @@ const electronAPI = {
       ipcRenderer.invoke(IPC.TTS_ABORT, { requestId }),
     voices: (): Promise<VoiceInfo[] | IpcError> =>
       ipcRenderer.invoke(IPC.TTS_VOICES),
+  },
+  audiobook: {
+    chooseFiles: (): Promise<string[] | IpcError> =>
+      ipcRenderer.invoke(IPC.AUDIOBOOK_CHOOSE_FILES),
+    start: (job: AudiobookJob): Promise<AudiobookResult | IpcError> =>
+      ipcRenderer.invoke(IPC.AUDIOBOOK_START, job),
+    cancel: (): Promise<OkResult> => ipcRenderer.invoke(IPC.AUDIOBOOK_CANCEL),
   },
   history: {
     list: (
@@ -127,6 +137,10 @@ const electronAPI = {
     subscribe<TtsDoneEvent>(IPC.ON_TTS_DONE, cb),
   onTtsError: (cb: (event: TtsErrorEvent) => void): (() => void) =>
     subscribe<TtsErrorEvent>(IPC.ON_TTS_ERROR, cb),
+  onAudiobookProgress: (
+    cb: (event: AudiobookProgressEvent) => void
+  ): (() => void) =>
+    subscribe<AudiobookProgressEvent>(IPC.ON_AUDIOBOOK_PROGRESS, cb),
   onNavigate: (cb: (payload: NavigatePayload) => void) =>
     subscribe<NavigatePayload>(IPC.ON_NAVIGATE, cb),
 };

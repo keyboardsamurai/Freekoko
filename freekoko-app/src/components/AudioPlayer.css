@@ -89,12 +89,12 @@
   background: var(--bg-surface-2);
   border-radius: 999px;
   overflow: hidden;
-  transition: height var(--dur-fast) var(--ease);
+  transition: transform var(--dur-fast) var(--ease);
 }
 
 .audio-scrub:hover:not([aria-disabled='true']) .audio-scrub-track,
 .audio-scrub:focus-visible .audio-scrub-track {
-  height: 5px;
+  transform: scaleY(1.6667);
 }
 
 .audio-scrub-fill {

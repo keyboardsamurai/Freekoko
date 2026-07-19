@@ -1,10 +1,15 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { readFile, writeFile, rename } from 'node:fs/promises';
 import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron';
 import log from 'electron-log';
 
 import type {
   AppSettings,
+  AudiobookJob,
+  AudiobookProgressEvent,
+  AudiobookResult,
   HistoryClearResult,
   HistoryDeleteResult,
   HistoryGetResult,
@@ -81,6 +86,106 @@ function wrapError(err: unknown, fallback: string): IpcError {
     return { error: fallback, message: err.message };
   }
   return { error: fallback, message: String(err) };
+}
+
+/**
+ * Drain a batch of text files sequentially into numbered WAVs in `outDir`.
+ * Extracted from the IPC handler so it's unit-testable without ipcMain.
+ *
+ * Resume: a chapter whose output WAV already exists is skipped, so re-running
+ * the same job after a crash/cancel picks up where it left off.
+ * Atomic write: each WAV is written to `<name>.wav.tmp` then renamed, so a
+ * crash mid-write never leaves a truncated file the resume check trusts.
+ *
+ * ponytail: one job at a time, sequential — the sidecar is actor-serial (one
+ * GPU), so concurrency would just contend on the same Metal pool.
+ */
+export async function runAudiobookJob(args: {
+  port: number;
+  job: AudiobookJob;
+  signal: AbortSignal;
+  onProgress: (e: AudiobookProgressEvent) => void;
+}): Promise<{ written: number; skipped: number; cancelled: boolean }> {
+  const { port, job, signal, onProgress } = args;
+  const { files, outDir, voice, speed } = job;
+  let written = 0;
+  let skipped = 0;
+
+  for (let i = 0; i < files.length; i++) {
+    if (signal.aborted) break;
+    const src = files[i];
+    const base = path.basename(src).replace(/\.(txt|md)$/i, '');
+    const outName = `${String(i + 1).padStart(3, '0')}_${base}.wav`;
+    const outPath = path.join(outDir, outName);
+
+    if (existsSync(outPath)) {
+      skipped++;
+      onProgress({ fileIndex: i, total: files.length, status: 'skipped', file: outName });
+      continue;
+    }
+
+    let text: string;
+    try {
+      text = await readFile(src, 'utf8');
+    } catch (err) {
+      onProgress({
+        fileIndex: i,
+        total: files.length,
+        status: 'error',
+        file: outName,
+        message: `read failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      continue;
+    }
+    if (!text.trim()) {
+      skipped++;
+      onProgress({ fileIndex: i, total: files.length, status: 'skipped', file: outName, message: 'empty file' });
+      continue;
+    }
+
+    try {
+      const result = await fetchTTSStream(
+        port,
+        { text, voice, speed },
+        (frame) => {
+          onProgress({
+            fileIndex: i,
+            total: files.length,
+            status: 'running',
+            file: outName,
+            chunkIndex: frame.chunkIndex,
+            chunkTotal: frame.totalChunks,
+          });
+        },
+        signal
+      );
+      if (signal.aborted) break;
+
+      const chunks = result.chunks.filter(
+        (c): c is Uint8Array => c instanceof Uint8Array
+      );
+      const float32 = assembleFloat32WithSilence(chunks, INTER_CHUNK_SILENCE_SAMPLES);
+      const wav = encodeWav(float32, result.sampleRate || 24000);
+      const tmp = `${outPath}.tmp`;
+      await writeFile(tmp, wav);
+      await rename(tmp, outPath);
+      written++;
+      onProgress({ fileIndex: i, total: files.length, status: 'done', file: outName });
+    } catch (err) {
+      if (signal.aborted) break;
+      log.error('audiobook chapter failed', src, err);
+      const wrapped = wrapError(err, 'chapter_failed');
+      onProgress({
+        fileIndex: i,
+        total: files.length,
+        status: 'error',
+        file: outName,
+        message: wrapped.message ?? wrapped.error,
+      });
+    }
+  }
+
+  return { written, skipped, cancelled: signal.aborted };
 }
 
 export function registerIpcHandlers(deps: HandlerDeps): void {
@@ -354,6 +459,81 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
       return { ok: true, alreadyDone: true };
     }
   );
+
+  // --- Audiobook (batch text-files → numbered WAVs) ------------------
+  // Single job at a time; the sidecar is actor-serial so there's nothing
+  // to gain from running jobs concurrently.
+  let audiobookAbort: AbortController | null = null;
+
+  ipcMain.handle(
+    IPC.AUDIOBOOK_CHOOSE_FILES,
+    async (): Promise<string[] | IpcError> => {
+      try {
+        const res = await dialog.showOpenDialog({
+          title: 'Choose text files',
+          properties: ['openFile', 'multiSelections'],
+          filters: [{ name: 'Text', extensions: ['txt', 'md'] }],
+        });
+        if (res.canceled || !res.filePaths?.length) return [];
+        // Sort by basename so 01_*.txt … 12_*.txt play in order regardless
+        // of the OS's selection order.
+        return [...res.filePaths].sort((a, b) =>
+          path.basename(a).localeCompare(path.basename(b))
+        );
+      } catch (err) {
+        log.error('audiobook:choose-files failed', err);
+        return wrapError(err, 'choose_files_failed');
+      }
+    }
+  );
+
+  ipcMain.handle(
+    IPC.AUDIOBOOK_START,
+    async (_evt, arg: AudiobookJob): Promise<AudiobookResult | IpcError> => {
+      const status = supervisor.status();
+      if (status.state !== 'running') {
+        return {
+          error: 'server_not_running',
+          message: `Server is ${status.state}; start it before generating.`,
+        } satisfies IpcError;
+      }
+      const files = Array.isArray(arg?.files) ? arg.files.map(String) : [];
+      const outDir = String(arg?.outDir ?? '');
+      const voice = String(arg?.voice ?? settings.get('defaultVoice'));
+      const speed = Number(arg?.speed ?? settings.get('defaultSpeed'));
+      if (files.length === 0) {
+        return { error: 'no_files', message: 'No text files selected.' } satisfies IpcError;
+      }
+      if (!outDir) {
+        return { error: 'no_output_dir', message: 'No output folder selected.' } satisfies IpcError;
+      }
+      if (audiobookAbort) {
+        return {
+          error: 'job_in_progress',
+          message: 'An audiobook job is already running.',
+        } satisfies IpcError;
+      }
+
+      const ctrl = new AbortController();
+      audiobookAbort = ctrl;
+      try {
+        const { written, skipped, cancelled } = await runAudiobookJob({
+          port: status.port,
+          job: { files, outDir, voice, speed },
+          signal: ctrl.signal,
+          onProgress: (e) => broadcast(IPC.ON_AUDIOBOOK_PROGRESS, e),
+        });
+        return { ok: true, cancelled, written, skipped };
+      } finally {
+        audiobookAbort = null;
+      }
+    }
+  );
+
+  ipcMain.handle(IPC.AUDIOBOOK_CANCEL, async (): Promise<OkResult> => {
+    audiobookAbort?.abort();
+    return { ok: true };
+  });
 
   ipcMain.handle(
     IPC.TTS_VOICES,

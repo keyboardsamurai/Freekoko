@@ -349,6 +349,40 @@ describe('AudioPlayer (streaming)', () => {
     expect(ctx.close).toHaveBeenCalled();
   });
 
+  it('releases each buffer source once it has played out (disconnect on ended, no stop at teardown)', async () => {
+    installApi();
+    const { unmount } = render(
+      <AudioPlayer
+        historyItemId={null}
+        streamingSource={{
+          requestId: 'req-rel',
+          sampleRate: 24000,
+          totalChunks: 2,
+        }}
+      />
+    );
+    const api = (globalThis as unknown as { electronAPI: ApiMock })
+      .electronAPI;
+    await act(async () => {
+      api.__chunkSubs[0](makePcmEvent('req-rel', 0, 2, 8));
+    });
+    const ctx = lastCtx!;
+    const src = ctx.__sources[0];
+    expect(src.disconnect).not.toHaveBeenCalled();
+
+    // Playing out a source must release it (so its PCM AudioBuffer can be
+    // GC'd mid-stream) without disturbing the handoff bookkeeping.
+    await act(async () => {
+      src.onended?.();
+    });
+    expect(src.disconnect).toHaveBeenCalledTimes(1);
+
+    // Teardown skips already-released slots — no stop() on played sources.
+    unmount();
+    expect(src.stop).not.toHaveBeenCalled();
+    expect(ctx.close).toHaveBeenCalled();
+  });
+
   it('fires onStreamDone immediately when tts:done arrives after final source already ended (race case)', async () => {
     installApi();
     const onStreamDone = vi.fn();

@@ -89,7 +89,10 @@ export function AudioPlayer({
   const ctxRef = useRef<AudioContext | null>(null);
   const startedAtRef = useRef<number>(0);
   const nextStartTimeRef = useRef<number>(0);
-  const sourcesRef = useRef<AudioBufferSourceNode[]>([]);
+  // Slots are nulled as each source finishes playing so its AudioBuffer
+  // (full Float32 PCM — ~5.8 MB/min) can be GC'd mid-stream; the array
+  // length stays intact because the done-handoff logic counts slots.
+  const sourcesRef = useRef<(AudioBufferSourceNode | null)[]>([]);
   const lastSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const streamDoneRef = useRef<boolean>(false);
   const chunksReceivedRef = useRef<number>(0);
@@ -287,6 +290,7 @@ export function AudioPlayer({
         } catch {
           // Some stubs don't implement start(). Swallow for resilience.
         }
+        const slotIndex = sourcesRef.current.length;
         sourcesRef.current.push(src);
         lastSourceRef.current = src;
         nextStartTimeRef.current =
@@ -312,6 +316,15 @@ export function AudioPlayer({
             setCurrentTime(total);
             triggerFinalHandoff();
           }
+          // This source has played out — drop its AudioBuffer so the PCM
+          // can be GC'd during long streams. Only null the slot (length is
+          // load-bearing for the scheduled-count check in tts:done).
+          try {
+            src.disconnect();
+          } catch {
+            /* already disconnected */
+          }
+          sourcesRef.current[slotIndex] = null;
         };
         // Update the displayed (growing) duration estimate.
         setDuration(nextStartTimeRef.current - startedAtRef.current);
@@ -368,8 +381,9 @@ export function AudioPlayer({
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
-      // Stop any in-flight buffer sources.
+      // Stop any in-flight buffer sources (played-out slots are null).
       for (const s of sourcesRef.current) {
+        if (!s) continue;
         try {
           s.stop();
         } catch {

@@ -262,6 +262,11 @@ export const IPC = {
   SETTINGS_CHOOSE_DIRECTORY: 'settings:choose-directory',
   SETTINGS_OPEN_PATH: 'settings:open-path',
 
+  // Audiobook (batch text-files → numbered WAVs)
+  AUDIOBOOK_CHOOSE_FILES: 'audiobook:choose-files',
+  AUDIOBOOK_START: 'audiobook:start',
+  AUDIOBOOK_CANCEL: 'audiobook:cancel',
+
   // Logs
   LOGS_RECENT: 'logs:recent',
   LOGS_CLEAR: 'logs:clear',
@@ -279,11 +284,42 @@ export const IPC = {
   ON_TTS_CHUNK: 'on:tts-chunk',
   ON_TTS_DONE: 'on:tts-done',
   ON_TTS_ERROR: 'on:tts-error',
+  ON_AUDIOBOOK_PROGRESS: 'on:audiobook-progress',
   ON_NAVIGATE: 'on:navigate',
 } as const;
 
 /** Tabs the renderer knows about; used by the `on:navigate` push event. */
-export type NavTab = 'generate' | 'history' | 'logs' | 'settings';
+export type NavTab = 'generate' | 'audiobook' | 'history' | 'logs' | 'settings';
+
+/** One batch job: N text files → N numbered WAVs in `outDir`. */
+export interface AudiobookJob {
+  /** Absolute paths, already in play order (renderer sorts by basename). */
+  files: string[];
+  outDir: string;
+  voice: string;
+  speed: number;
+}
+
+/** Per-file progress pushed on `on:audiobook-progress` during a job. */
+export interface AudiobookProgressEvent {
+  fileIndex: number;
+  total: number;
+  status: 'running' | 'done' | 'skipped' | 'error';
+  /** Basename of the source file this event refers to. */
+  file: string;
+  chunkIndex?: number;
+  chunkTotal?: number;
+  message?: string;
+}
+
+/** Terminal result of an `audiobook:start` invocation. */
+export interface AudiobookResult {
+  ok: true;
+  cancelled?: boolean;
+  /** Files that completed this run (excludes skipped). */
+  written: number;
+  skipped: number;
+}
 
 /** Payload for the `on:navigate` event emitted by the main process (tray + app menu). */
 export interface NavigatePayload {

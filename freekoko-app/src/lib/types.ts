@@ -2,6 +2,9 @@
 // imports never reach into Node / Electron modules directly.
 export type {
   AppSettings,
+  AudiobookJob,
+  AudiobookProgressEvent,
+  AudiobookResult,
   HealthResponse,
   HistoryItem,
   IpcError,

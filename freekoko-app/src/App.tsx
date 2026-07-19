@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { StatusBadge } from './components/StatusBadge';
 import { GenerateView } from './views/GenerateView';
+import { AudiobookView } from './views/AudiobookView';
 import { HistoryView } from './views/HistoryView';
 import { LogsView } from './views/LogsView';
 import { SettingsView } from './views/SettingsView';
@@ -10,6 +11,7 @@ import { useHistoryStore } from './store/useHistoryStore';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'generate', label: 'Generate' },
+  { id: 'audiobook', label: 'Audiobook' },
   { id: 'history', label: 'History' },
   { id: 'logs', label: 'Logs' },
   { id: 'settings', label: 'Settings' },
@@ -64,6 +66,7 @@ export function App() {
       </header>
       <main className="app-main">
         {currentTab === 'generate' && <GenerateView />}
+        {currentTab === 'audiobook' && <AudiobookView />}
         {currentTab === 'history' && <HistoryView />}
         {currentTab === 'logs' && <LogsView />}
         {currentTab === 'settings' && <SettingsView />}
