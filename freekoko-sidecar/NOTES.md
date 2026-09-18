@@ -132,3 +132,24 @@ does not drain in-flight Hummingbird responses for up to 5 seconds.
 so the server stops accepting new connections and finishes in-flight
 requests before the process exits. The current implementation is
 acceptable for P1 acceptance criteria but worth revisiting before P6.
+
+## 6. MLX Metal buffer cache — idle footprint grew to 25+ GB (FIXED)
+
+**Symptom.** After a few generations the sidecar sat idle at 25+ GB
+(Activity Monitor "Memory"; `ps` RSS stays ~600 MB because the memory is
+IOAccelerator/Metal, visible via `footprint -p <pid>`). Measured on a
+128 GB machine with the 0.1.0 DMG binary: 8.9 GB after one 9-chunk stream,
+9.1 GB after the same text again, 13 GB and 25 GB after two streams with
+different text. Never released while idle.
+
+**Cause.** MLX's Metal allocator keeps every freed buffer in a cache whose
+default limit is `min(1.5 × recommendedMaxWorkingSetSize, 0.95 × RAM)`
+(`mlx/backend/metal/allocator.cpp`). Cached buffers are only reused for
+requests within a similar size band, and every chunk has a different
+sample count, so the decoder's multi-GB conv/iSTFT intermediates rarely
+match and the cache just accumulates.
+
+**Fix.** `EngineWrapper.generate` calls `Memory.clearCache()` (mlx-swift
+0.30 API) after every chunk. Idle footprint is then the model weights only.
+Alternative if per-chunk clearing ever shows up in timings: set
+`Memory.cacheLimit` once at startup (e.g. 1–2 GB) and keep the hot set.

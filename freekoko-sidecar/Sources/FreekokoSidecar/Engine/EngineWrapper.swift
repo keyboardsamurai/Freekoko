@@ -7,6 +7,7 @@
 
 import Foundation
 import KokoroVoiceShared
+import MLX
 
 enum EngineWrapperError: Error, LocalizedError {
     case modelWeightsMissing(URL)
@@ -123,6 +124,13 @@ actor EngineWrapper {
     /// MLX inference begins.
     func generate(text: String, voice: String, speed: Float) async throws -> [Float] {
         try Task.checkCancellation()
+        // MLX parks every freed Metal buffer in a cache capped at ~95% of RAM.
+        // Chunk lengths vary, so buffers rarely get reused and the cache grows by
+        // gigabytes per generation and then sits there while idle. Drop it after
+        // each chunk; idle footprint is then just the model weights.
+        // ponytail: per-chunk clear costs a few ms of re-allocation; if that ever
+        // matters, set `Memory.cacheLimit` once at startup instead.
+        defer { Memory.clearCache() }
         return try await KokoroEngine.shared.generateAudio(
             text: text,
             voiceId: voice,

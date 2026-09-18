@@ -94,3 +94,4 @@ freekoko-app/logs/
 *.bak
 .#*
 prd.md
+/graft/
